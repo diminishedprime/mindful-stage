@@ -1,0 +1,67 @@
+{
+  "name": "mindful-stage",
+  "displayName": "Mindful Stage",
+  "description": "Keyboard-driven incremental staging for VS Code - jump between hunks and files, staging as you go.",
+  "version": "1.0.0",
+  "publisher": "diminishedprime",
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "mindfulStage.nextUnstaged",
+        "title": "Mindful Stage: Jump to Next Unstaged File"
+      },
+      {
+        "command": "mindfulStage.prevUnstaged",
+        "title": "Mindful Stage: Jump to Previous Unstaged File"
+      },
+      {
+        "command": "mindfulStage.startTracking",
+        "title": "Mindful Stage: Start Tracking File (stage first line)"
+      },
+      {
+        "command": "mindfulStage.nextUnstagedHunk",
+        "title": "Mindful Stage: Jump to Next Unstaged Hunk"
+      },
+      {
+        "command": "mindfulStage.prevUnstagedHunk",
+        "title": "Mindful Stage: Jump to Previous Unstaged Hunk"
+      },
+      {
+        "command": "mindfulStage.nextStaged",
+        "title": "Mindful Stage: Jump to Next Staged File"
+      },
+      {
+        "command": "mindfulStage.prevStaged",
+        "title": "Mindful Stage: Jump to Previous Staged File"
+      },
+      {
+        "command": "mindfulStage.nextStagedHunk",
+        "title": "Mindful Stage: Jump to Next Staged Hunk"
+      },
+      {
+        "command": "mindfulStage.prevStagedHunk",
+        "title": "Mindful Stage: Jump to Previous Staged Hunk"
+      },
+      {
+        "command": "mindfulStage.repeatLast",
+        "title": "Mindful Stage: Repeat Last Nav"
+      },
+      {
+        "command": "mindfulStage.stageHunkAtCursor",
+        "title": "Mindful Stage: Stage Unstaged Hunk at Cursor"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/vscode": "^1.116.0"
+  }
+}
