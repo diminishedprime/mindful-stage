@@ -46,7 +46,17 @@ function collectChangedPaths(repo, mode) {
     mode === "staged"
       ? repo.state.indexChanges
       : [...repo.state.workingTreeChanges, ...repo.state.untrackedChanges];
-  return [...new Set(changes.map((c) => c.uri.fsPath))].sort();
+  // A dirty submodule shows up in the parent repo's changes as the submodule
+  // directory itself, which isn't a text document — skip those so we don't
+  // try to open a directory.
+  const submoduleRoots = new Set(
+    getGitApi()
+      .repositories.filter((r) => r.rootUri.fsPath !== repo.rootUri.fsPath)
+      .map((r) => r.rootUri.fsPath),
+  );
+  return [...new Set(changes.map((c) => c.uri.fsPath))]
+    .filter((p) => !submoduleRoots.has(p))
+    .sort();
 }
 
 /** @param {Repository} repo @param {string} absPath */
@@ -72,15 +82,49 @@ function hintIfUntracked(repo, absPath) {
   );
 }
 
+/**
+ * Heads-up when navigation crosses a repo boundary, so a hop into a sibling
+ * submodule isn't silent.
+ * @param {Repository | null | undefined} prev
+ * @param {Repository} next
+ */
+function notifyRepoChange(prev, next) {
+  if (prev && prev.rootUri.fsPath === next.rootUri.fsPath) return;
+  const name = path.basename(next.rootUri.fsPath);
+  vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `mindful-stage: now in ${name}`,
+    },
+    () => new Promise((resolve) => setTimeout(resolve, 1500)),
+  );
+}
+
 function getActiveRepo() {
   const api = getGitApi();
   const active = vscode.window.activeTextEditor?.document.uri;
   const repo = (active && api.getRepository(active)) || api.repositories[0];
   if (!repo) {
-    vscode.window.showInformationMessage("mindful-stage: no git repository here");
+    vscode.window.showInformationMessage(
+      "mindful-stage: no git repository here",
+    );
     return null;
   }
   return repo;
+}
+
+/**
+ * Flatten changes across every loaded repo into a single ordered ring.
+ * Order: repository registration order, then sorted file path within each.
+ * Lets navigation hop from the last unstaged file in one repo into the first
+ * unstaged file of the next, wrapping at the end.
+ * @param {"unstaged" | "staged"} mode
+ * @returns {{ repo: Repository; path: string }[]}
+ */
+function collectAllChanges(mode) {
+  return getGitApi().repositories.flatMap((repo) =>
+    collectChangedPaths(repo, mode).map((path) => ({ repo, path })),
+  );
 }
 
 /**
@@ -88,24 +132,29 @@ function getActiveRepo() {
  * @param {"unstaged" | "staged"} mode
  */
 async function jump(direction, mode) {
-  const repo = getActiveRepo();
-  if (!repo) return;
-  const files = collectChangedPaths(repo, mode);
-  if (files.length === 0) {
+  const all = collectAllChanges(mode);
+  if (all.length === 0) {
     vscode.window.showInformationMessage(`mindful-stage: no ${mode} files`);
     return;
   }
 
-  const current = vscode.window.activeTextEditor?.document.uri.fsPath;
-  const idx = current ? files.indexOf(current) : -1;
-  const next =
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  const prevRepo = activeUri ? getGitApi().getRepository(activeUri) : null;
+  const idx = activeUri
+    ? all.findIndex((e) => e.path === activeUri.fsPath)
+    : -1;
+  const nextIdx =
     idx === -1
-      ? files[direction > 0 ? 0 : files.length - 1]
-      : files[(idx + direction + files.length) % files.length];
+      ? direction > 0
+        ? 0
+        : all.length - 1
+      : (idx + direction + all.length) % all.length;
+  const target = all[nextIdx];
 
-  const doc = await vscode.workspace.openTextDocument(next);
+  const doc = await vscode.workspace.openTextDocument(target.path);
   await vscode.window.showTextDocument(doc, { preserveFocus: false });
-  if (mode === "unstaged") hintIfUntracked(repo, next);
+  notifyRepoChange(prevRepo, target.repo);
+  if (mode === "unstaged") hintIfUntracked(target.repo, target.path);
 }
 
 async function startTracking() {
@@ -141,7 +190,11 @@ async function startTracking() {
     const content = fs.readFileSync(uri.fsPath, "utf8");
     const nlIdx = content.indexOf("\n");
     const firstLine = nlIdx === -1 ? content : content.slice(0, nlIdx + 1);
-    const hash = git(repoRoot, ["hash-object", "-w", "--stdin"], firstLine).trim();
+    const hash = git(
+      repoRoot,
+      ["hash-object", "-w", "--stdin"],
+      firstLine,
+    ).trim();
     git(repoRoot, [
       "update-index",
       "--add",
@@ -241,25 +294,30 @@ async function jumpHunk(direction, mode) {
     return;
   }
 
-  // No more hunks in this file — spill into the next changed file.
-  const files = collectChangedPaths(repo, mode);
-  if (files.length === 0) return;
-  const idx = files.indexOf(curPath);
-  const targetPath =
+  // No more hunks in this file — spill into the next changed file across
+  // every loaded repo, so we hop into a sibling submodule when this one
+  // is exhausted.
+  const all = collectAllChanges(mode);
+  if (all.length === 0) return;
+  const idx = all.findIndex((e) => e.path === curPath);
+  const target =
     idx === -1
-      ? files[direction > 0 ? 0 : files.length - 1]
-      : files[(idx + direction + files.length) % files.length];
+      ? all[direction > 0 ? 0 : all.length - 1]
+      : all[(idx + direction + all.length) % all.length];
 
-  const doc = await vscode.workspace.openTextDocument(targetPath);
+  const doc = await vscode.workspace.openTextDocument(target.path);
   const newEditor = await vscode.window.showTextDocument(doc);
-  const newStarts = hunks(repoRoot, targetPath, mode).map((h) => h.start);
+  const newStarts = hunks(target.repo.rootUri.fsPath, target.path, mode).map(
+    (h) => h.start,
+  );
   if (newStarts.length) {
     revealLine(
       newEditor,
       direction > 0 ? newStarts[0] : newStarts[newStarts.length - 1],
     );
   }
-  if (mode === "unstaged") hintIfUntracked(repo, targetPath);
+  notifyRepoChange(repo, target.repo);
+  if (mode === "unstaged") hintIfUntracked(target.repo, target.path);
 }
 
 function stageHunkAtCursor() {
@@ -278,7 +336,10 @@ function stageHunkAtCursor() {
     (h) => h.start <= cursor && cursor < h.start + Math.max(h.count, 1),
   );
   if (idx === -1) {
-    vscode.window.setStatusBarMessage("mindful-stage: no unstaged hunk at cursor", 2000);
+    vscode.window.setStatusBarMessage(
+      "mindful-stage: no unstaged hunk at cursor",
+      2000,
+    );
     return;
   }
 
@@ -289,9 +350,15 @@ function stageHunkAtCursor() {
   const chunks = diff.slice(firstAt).split(/(?=^@@ )/m);
 
   try {
-    git(repoRoot, ["apply", "--cached", "--unidiff-zero"], header + chunks[idx]);
+    git(
+      repoRoot,
+      ["apply", "--cached", "--unidiff-zero"],
+      header + chunks[idx],
+    );
   } catch (/** @type {any} */ e) {
-    vscode.window.showErrorMessage(`mindful-stage: ${(e.stderr || e.message).trim()}`);
+    vscode.window.showErrorMessage(
+      `mindful-stage: ${(e.stderr || e.message).trim()}`,
+    );
   }
 }
 
@@ -344,12 +411,17 @@ function activate(context) {
       "mindfulStage.prevStagedHunk",
       repeatable(() => jumpHunk(-1, "staged")),
     ),
-    vscode.commands.registerCommand("mindfulStage.repeatLast", () => lastNav?.()),
+    vscode.commands.registerCommand("mindfulStage.repeatLast", () =>
+      lastNav?.(),
+    ),
     vscode.commands.registerCommand(
       "mindfulStage.stageHunkAtCursor",
       stageHunkAtCursor,
     ),
-    vscode.commands.registerCommand("mindfulStage.startTracking", startTracking),
+    vscode.commands.registerCommand(
+      "mindfulStage.startTracking",
+      startTracking,
+    ),
   );
 }
 
