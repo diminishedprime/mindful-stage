@@ -25,8 +25,20 @@ function git(cwd, args, input) {
  */
 
 // git.d.ts is ambient type-only; the Status enum isn't available at runtime,
-// so we mirror the numeric value here.
-const GIT_STATUS_UNTRACKED = 7; // Status.UNTRACKED
+// so we mirror the numeric values here.
+const GIT_STATUS_INDEX_DELETED = 2;
+const GIT_STATUS_DELETED = 6;
+const GIT_STATUS_UNTRACKED = 7;
+const GIT_STATUS_DELETED_BY_US = 15;
+const GIT_STATUS_DELETED_BY_THEM = 16;
+const GIT_STATUS_BOTH_DELETED = 18;
+const DELETED_STATUSES = new Set([
+  GIT_STATUS_INDEX_DELETED,
+  GIT_STATUS_DELETED,
+  GIT_STATUS_DELETED_BY_US,
+  GIT_STATUS_DELETED_BY_THEM,
+  GIT_STATUS_BOTH_DELETED,
+]);
 
 /** @returns {GitApi} */
 function getGitApi() {
@@ -54,7 +66,9 @@ function collectChangedPaths(repo, mode) {
       .repositories.filter((r) => r.rootUri.fsPath !== repo.rootUri.fsPath)
       .map((r) => r.rootUri.fsPath),
   );
-  return [...new Set(changes.map((c) => c.uri.fsPath))]
+  // Deleted files have nothing to open as a text document.
+  const live = changes.filter((c) => !DELETED_STATUSES.has(c.status));
+  return [...new Set(live.map((c) => c.uri.fsPath))]
     .filter((p) => !submoduleRoots.has(p))
     .sort();
 }
