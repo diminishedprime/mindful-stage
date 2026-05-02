@@ -74,3 +74,15 @@ subspace = staged ("cached").
 I personally find myself using `<leader> gs` a lot. It's helpful for going
 through an LLM-diff, staging piece-by-piece while still having some idea of
 what's going on.
+
+## Example global keybinding
+
+If you want a jump that works from anywhere (not just vim normal mode), bind it
+in `keybindings.json`. For example, `Ctrl+X U` to jump to the next unstaged
+file:
+
+```jsonc
+[
+  { "key": "ctrl+x u", "command": "mindfulStage.nextUnstaged" }
+]
+```
