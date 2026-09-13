@@ -1,11 +1,20 @@
-# Mindful Stage
+# Mindful stage
 
 Keyboard-driven incremental staging for VS Code. Jump between unstaged hunks and
 files, stage one piece at a time, then commit with a clear picture of what's
 going in.
 
-Pairs well with the
-[magit](https://marketplace.visualstudio.com/items?itemName=kahole.magit)
+The main use case is mindfully reviewing LLM output. LLMs working in a polyrepo
+setup can be very efficient with the additional context, but this often results
+in files changed across many repos which can be difficult to navigate. This
+extension provides commands to land on the next (or previous) change, read it
+(argue with the LLM about how it's terrible), fix it, stage it, and then move
+on.
+
+It handles nested git repos across every workspace folders, and will stay fast,
+even with hundreds of repos.
+
+Pairs exceptionally well with [magit] for the commit step.
 
 ## Commands
 
@@ -21,30 +30,29 @@ All commands are prefixed `Mindful Stage:` in the command palette.
 | `mindfulStage.prevStaged`        | Jump to previous staged file                                                        |
 | `mindfulStage.nextStagedHunk`    | Jump to next staged hunk                                                            |
 | `mindfulStage.prevStagedHunk`    | Jump to previous staged hunk                                                        |
+| `mindfulStage.nextStagedRepo`    | Jump to the next repo with staged changes                                           |
+| `mindfulStage.prevStagedRepo`    | Jump to the previous repo with staged changes                                       |
 | `mindfulStage.stageHunkAtCursor` | Stage the unstaged hunk under the cursor                                            |
 | `mindfulStage.startTracking`     | Add an untracked file (stages just line 1, so you can review the rest hunk-by-hunk) |
 | `mindfulStage.repeatLast`        | Repeat the last navigation                                                          |
 
 ## Install
 
-There's no Marketplace listing yet. Build and install locally:
+There is no Marketplace listing. Build and install locally with [pnpm] and
+[just]:
 
 ```sh
-git clone https://github.com/diminishedprime/mindful-stage.git
+git clone https://git.lan.mjh.io/lab/mindful-stage.git
 cd mindful-stage
-npm install
-npx vsce package
-code --install-extension mindful-stage-*.vsix
+pnpm install
+just install
 ```
-
-Re-run `npx vsce package && code --install-extension mindful-stage-*.vsix` after
-pulling updates.
 
 ## Example keybindings (vim-mode flavored)
 
 These are what I use, paired with vim-mode in `settings.json`. Convention:
 `<leader>g` is the git namespace, lowercase = hunk, uppercase = file, `c`
-subspace = staged ("cached").
+subspace = staged ("cached"), and `r` within it = repo.
 
 ```jsonc
 "vim.normalModeKeyBindingsNonRecursive": [
@@ -59,6 +67,8 @@ subspace = staged ("cached").
   { "before": ["<leader>", "g", "c", "p"], "commands": ["mindfulStage.prevStagedHunk"] },
   { "before": ["<leader>", "g", "c", "N"], "commands": ["mindfulStage.nextStaged"] },
   { "before": ["<leader>", "g", "c", "P"], "commands": ["mindfulStage.prevStaged"] },
+  { "before": ["<leader>", "g", "c", "r"], "commands": ["mindfulStage.nextStagedRepo"] },
+  { "before": ["<leader>", "g", "c", "R"], "commands": ["mindfulStage.prevStagedRepo"] },
 
   // Stage hunk at cursor, then advance to the next one (review-flow combo)
   { "before": ["<leader>", "g", "s"], "commands": ["mindfulStage.stageHunkAtCursor", "mindfulStage.nextUnstagedHunk"] },
@@ -71,10 +81,6 @@ subspace = staged ("cached").
 ]
 ```
 
-I personally find myself using `<leader> gs` a lot. It's helpful for going
-through an LLM-diff, staging piece-by-piece while still having some idea of
-what's going on.
-
 ## Example global keybinding
 
 If you want a jump that works from anywhere (not just vim normal mode), bind it
@@ -82,7 +88,9 @@ in `keybindings.json`. For example, `Ctrl+X U` to jump to the next unstaged
 file:
 
 ```jsonc
-[
-  { "key": "ctrl+x u", "command": "mindfulStage.nextUnstaged" }
-]
+[{ "key": "ctrl+x u", "command": "mindfulStage.nextUnstaged" }]
 ```
+
+[magit]: https://marketplace.visualstudio.com/items?itemName=kahole.magit
+[pnpm]: https://pnpm.io
+[just]: https://just.systems

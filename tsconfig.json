@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "noEmit": true,
+    "target": "es2025",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2025"],
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

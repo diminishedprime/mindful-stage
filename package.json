@@ -2,17 +2,21 @@
   "name": "mindful-stage",
   "displayName": "Mindful Stage",
   "description": "Keyboard-driven incremental staging for VS Code - jump between hunks and files, staging as you go.",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "publisher": "diminishedprime",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.137.0"
   },
-  "extensionDependencies": [
-    "vscode.git"
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "pnpm build"
+  },
+  "activationEvents": [
+    "onStartupFinished"
   ],
-  "main": "./extension.js",
-  "activationEvents": [],
   "contributes": {
     "commands": [
       {
@@ -52,6 +56,14 @@
         "title": "Mindful Stage: Jump to Previous Staged Hunk"
       },
       {
+        "command": "mindfulStage.nextStagedRepo",
+        "title": "Mindful Stage: Jump to Next Repo With Staged Changes"
+      },
+      {
+        "command": "mindfulStage.prevStagedRepo",
+        "title": "Mindful Stage: Jump to Previous Repo With Staged Changes"
+      },
+      {
         "command": "mindfulStage.repeatLast",
         "title": "Mindful Stage: Repeat Last Nav"
       },
@@ -62,7 +74,19 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "@types/vscode": "^1.116.0"
+    "@parcel/watcher": "^2.6.0",
+    "@types/node": "^25.9.6",
+    "@types/vscode": "^1.137.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3",
+    "parse-diff": "^0.12.0",
+    "reflect-metadata": "^0.2.2",
+    "simple-git": "^3.36.0",
+    "tsyringe": "^4.10.0"
   }
 }
