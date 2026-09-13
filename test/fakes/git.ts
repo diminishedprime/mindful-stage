@@ -14,6 +14,7 @@ import type { Git, Hunk, Mode } from "../../src/types";
 // they otherwise require interaction with a held repo to finish.
 export class GatedGit implements Git {
   private held = new Set<string>();
+  private readonly failing = new Set<string>();
   private readonly aborter = new AbortController();
 
   constructor(
@@ -29,7 +30,14 @@ export class GatedGit implements Git {
     this.held = this.repos.difference(new Set(open));
   }
 
+  failNext(repo: string): void {
+    this.failing.add(repo);
+  }
+
   async status(repo: string): Promise<StatusResult> {
+    if (this.failing.delete(repo)) {
+      throw new Error(`simulated git failure in ${repo}`);
+    }
     const result = await this.real.status(repo);
     if (this.held.has(repo)) {
       const { signal } = this.aborter;

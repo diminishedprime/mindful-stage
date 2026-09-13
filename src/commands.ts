@@ -137,7 +137,7 @@ export class Commands {
     const firstLine = newline === -1 ? content : content.slice(0, newline + 1);
     const hash = await this.git.hashObject(repo, firstLine);
     await this.git.addToIndex(repo, file, hash);
-    this.gitRefresher.refresh();
+    this.gitRefresher.refresh(repo);
   }
 
   async stageHunkAtCursor(): Promise<void> {
@@ -150,8 +150,9 @@ export class Commands {
       this.notifier.notify("no unstaged hunk at cursor");
       return;
     }
-    await this.git.stage(await this.repoOf(active.path), hunk);
-    this.gitRefresher.refresh();
+    const repo = await this.repoOf(active.path);
+    await this.git.stage(repo, hunk);
+    this.gitRefresher.refresh(repo);
   }
 
   private async jumpHunk(direction: Direction, mode: Mode): Promise<void> {
@@ -355,11 +356,17 @@ export class Commands {
   }
 
   private refresh(repo: string, tracked: Tracked): Promise<Changes> {
-    tracked.pending ??= this.changes(repo).then((changes) => {
-      tracked.known = changes;
-      tracked.pending = undefined;
-      return changes;
-    });
+    tracked.pending ??= this.changes(repo).then(
+      (changes) => {
+        tracked.known = changes;
+        tracked.pending = undefined;
+        return changes;
+      },
+      (error) => {
+        tracked.pending = undefined;
+        throw error;
+      },
+    );
     return tracked.pending;
   }
 

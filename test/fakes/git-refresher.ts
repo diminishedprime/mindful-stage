@@ -1,9 +1,9 @@
 import type { GitRefresher } from "../../src/types";
 
 export class FakeGitRefresher implements GitRefresher {
-  refreshes = 0;
+  refreshed: string[] = [];
 
-  refresh(): void {
-    this.refreshes += 1;
+  refresh(repo: string): void {
+    this.refreshed.push(repo);
   }
 }

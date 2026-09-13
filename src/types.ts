@@ -55,7 +55,7 @@ export interface Editor {
 }
 
 export interface GitRefresher {
-  refresh(): void;
+  refresh(repo: string): void;
 }
 
 export interface Notifier {

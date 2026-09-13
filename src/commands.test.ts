@@ -256,6 +256,16 @@ describe.concurrent("Commands", () => {
       ]);
     });
 
+    test("skips git-lfs files whose names contain spaces", async ({ t }) => {
+      await t.polyrepo.trackWithLfs(Polyrepo.ARGO, "*.png", "my logo.png");
+      await t.polyrepo.modifyTrackedFile(`${Polyrepo.ARGO}/my logo.png`);
+
+      await t.sut[command]();
+
+      expect(t.editor.opened).toEqual([]);
+      expect(t.notifier.notices).toEqual(["no unstaged files"]);
+    });
+
     test("skips files ignored by the user's global git ignore", async ({
       t,
     }) => {
@@ -366,6 +376,20 @@ describe.concurrent("Commands", () => {
       );
       expect(t.notifier.errors).toEqual([
         "can't open heap.png, opening first tracked file so you can handle heap.png manually.",
+      ]);
+    });
+  });
+
+  describe("after git fails once for a repo", () => {
+    test("the next change in that repo is still found", async ({ t }) => {
+      t.git.failNext(t.polyrepo.repoPath(Polyrepo.ARGO));
+      await t.polyrepo.modifyTrackedFile(middle);
+      await t.polyrepo.modifyTrackedFile(first);
+
+      await t.sut.nextUnstaged();
+
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(first),
       ]);
     });
   });
@@ -534,7 +558,9 @@ describe.concurrent("Commands", () => {
       expect(t.editor.opened.at(-1)).toEqual({ path: file, line: 2 });
       await t.sut.nextStaged();
       expect(t.editor.opened.at(-1)?.path).toBe(file);
-      expect(t.gitRefresher.refreshes).toBe(1);
+      expect(t.gitRefresher.refreshed).toEqual([
+        t.polyrepo.repoPath(Polyrepo.ARGO),
+      ]);
     });
 
     test("refuses a file that is already tracked", async ({ t }) => {
@@ -564,7 +590,9 @@ describe.concurrent("Commands", () => {
         path: t.polyrepo.pathTo(last),
         line: 9,
       });
-      expect(t.gitRefresher.refreshes).toBe(1);
+      expect(t.gitRefresher.refreshed).toEqual([
+        t.polyrepo.repoPath(Polyrepo.MINDFUL_STAGE),
+      ]);
     });
 
     test("stages a hunk in a file inside a subdirectory", async ({ t }) => {
