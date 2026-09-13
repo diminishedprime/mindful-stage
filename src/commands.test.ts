@@ -7,8 +7,10 @@ import {
   GIT,
   GIT_REFRESHER,
   NOTIFIER,
+  READMES,
   REPO_FINDER,
   ROOTS,
+  STATUS_BAR,
   WATCHER,
 } from "./commands";
 import { GlobRepoFinder } from "./repo-finder";
@@ -19,6 +21,7 @@ import type {
   GitRefresher,
   Notifier,
   RepoFinder,
+  StatusBar,
   Watcher,
 } from "./types";
 import { FakeEditor } from "../test/fakes/editor";
@@ -26,6 +29,7 @@ import { GatedGit } from "../test/fakes/git";
 import { FakeGitRefresher } from "../test/fakes/git-refresher";
 import { FakeNotifier } from "../test/fakes/notifier";
 import { GatedRepoFinder } from "../test/fakes/repo-finder";
+import { FakeStatusBar } from "../test/fakes/status-bar";
 import { SettlingWatcher } from "../test/fakes/watcher";
 import { ParcelWatcher } from "../test/parcel-watcher";
 import { Polyrepo } from "../test/polyrepo";
@@ -43,6 +47,7 @@ const test = base.extend<{
   git: GatedGit;
   gitRefresher: FakeGitRefresher;
   finder: GatedRepoFinder;
+  statusBar: FakeStatusBar;
   watcher: SettlingWatcher;
   sut: Commands;
   t: {
@@ -52,6 +57,7 @@ const test = base.extend<{
     git: GatedGit;
     gitRefresher: FakeGitRefresher;
     finder: GatedRepoFinder;
+    statusBar: FakeStatusBar;
     watcher: SettlingWatcher;
     sut: Commands;
   };
@@ -88,8 +94,11 @@ const test = base.extend<{
   finder: async ({}, use) => {
     await use(new GatedRepoFinder(new GlobRepoFinder()));
   },
+  statusBar: async ({}, use) => {
+    await use(new FakeStatusBar());
+  },
   sut: async (
-    { roots, editor, notifier, git, gitRefresher, finder, watcher },
+    { roots, editor, notifier, git, gitRefresher, finder, statusBar, watcher },
     use,
   ) => {
     const sut = container
@@ -99,6 +108,7 @@ const test = base.extend<{
       .register<Git>(GIT, { useValue: git })
       .register<GitRefresher>(GIT_REFRESHER, { useValue: gitRefresher })
       .register<RepoFinder>(REPO_FINDER, { useValue: finder })
+      .register<StatusBar>(STATUS_BAR, { useValue: statusBar })
       .register<string[]>(ROOTS, { useValue: roots })
       .register<Watcher>(WATCHER, { useValue: watcher })
       .resolve(Commands);
@@ -107,7 +117,17 @@ const test = base.extend<{
     await sut.dispose();
   },
   t: async (
-    { polyrepo, editor, notifier, git, gitRefresher, finder, watcher, sut },
+    {
+      polyrepo,
+      editor,
+      notifier,
+      git,
+      gitRefresher,
+      finder,
+      statusBar,
+      watcher,
+      sut,
+    },
     use,
   ) => {
     polyrepo.attach(watcher);
@@ -118,6 +138,7 @@ const test = base.extend<{
       git,
       gitRefresher,
       finder,
+      statusBar,
       watcher,
       sut,
     });
@@ -222,13 +243,34 @@ describe.concurrent("Commands", () => {
       ]);
     });
 
-    test("skips deleted files", async ({ t }) => {
+    test("lands on a deleted file by showing the repo's first tracked text file", async ({
+      t,
+    }) => {
       await t.polyrepo.deleteTrackedFile(Polyrepo.ARGO_YAML);
 
       await t.sut[command]();
 
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(`${Polyrepo.ARGO}/.gitignore`),
+      ]);
+      expect(t.notifier.errors).toEqual([
+        "argo.yaml was deleted, opening first tracked file so you can stage the deletion manually.",
+      ]);
+    });
+
+    test("with every tracked file deleted, says so instead of landing", async ({
+      t,
+    }) => {
+      for (const file of [".gitignore", "argo.yaml", "kustomization.yaml"]) {
+        await t.polyrepo.deleteTrackedFile(`${Polyrepo.ARGO}/${file}`);
+      }
+
+      await t.sut[command]();
+
       expect(t.editor.opened).toEqual([]);
-      expect(t.notifier.notices).toEqual(["no unstaged files"]);
+      expect(t.notifier.errors).toEqual([
+        expect.stringContaining("nothing in argo can be opened instead"),
+      ]);
     });
 
     test("skips files tracked by git-lfs", async ({ t }) => {
@@ -377,6 +419,49 @@ describe.concurrent("Commands", () => {
       expect(t.notifier.errors).toEqual([
         "can't open heap.png, opening first tracked file so you can handle heap.png manually.",
       ]);
+    });
+  });
+
+  describe.each(READMES)("a repo whose readme is named %s", (readme) => {
+    test("stands in for a file that can't be opened", async ({ t }) => {
+      await t.polyrepo.cloneRepo(Polyrepo.CERT_MANAGER, {
+        ".gitignore": "*.log\n",
+        [readme]: "cert-manager\n",
+        "kustomization.yaml": "resources:\n  - cert-manager.yaml\n",
+      });
+      await t.polyrepo.deleteTrackedFile(Polyrepo.CERT_MANAGER_KUSTOMIZATION);
+
+      await t.sut.nextUnstaged();
+
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(`${Polyrepo.CERT_MANAGER}/${readme}`),
+      ]);
+    });
+  });
+
+  describe("hunks made only of deleted lines", () => {
+    test("land on the line that now occupies the gap", async ({ t }) => {
+      await t.polyrepo.deleteTrackedLines(last, 4, 5);
+      await t.editor.open(t.polyrepo.pathTo(last), 1);
+
+      await t.sut.nextUnstagedHunk();
+
+      expect(t.editor.opened.at(-1)).toEqual({
+        path: t.polyrepo.pathTo(last),
+        line: 4,
+      });
+    });
+
+    test("at the top of a file land on its first line", async ({ t }) => {
+      await t.polyrepo.deleteTrackedLines(last, 1, 2);
+      await t.editor.open(t.polyrepo.pathTo(first), 1);
+
+      await t.sut.nextUnstagedHunk();
+
+      expect(t.editor.opened.at(-1)).toEqual({
+        path: t.polyrepo.pathTo(last),
+        line: 1,
+      });
     });
   });
 
@@ -743,6 +828,45 @@ describe.concurrent("Commands", () => {
         t.polyrepo.pathTo(first),
         t.polyrepo.pathTo(Polyrepo.CERT_MANAGER_KUSTOMIZATION),
       ]);
+    });
+  });
+
+  describe("the status bar summary", () => {
+    test("with nothing changed says it is ready to commit", async ({ t }) => {
+      expect(t.statusBar.summary).toBe("ready to commit");
+    });
+
+    test("counts unstaged work by its git status letter", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.modifyTrackedFile(last);
+      await t.polyrepo.createUntrackedFile(Polyrepo.ARGO, "extra.yaml");
+
+      expect(t.statusBar.summary).toBe("2M 1?");
+    });
+
+    test("counts deletions the navigation ring skips", async ({ t }) => {
+      await t.polyrepo.deleteTrackedFile(first);
+
+      expect(t.statusBar.summary).toBe("1D");
+    });
+
+    test("staging the only change makes it ready again", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      expect(t.statusBar.summary).toBe("1M");
+
+      await t.polyrepo.stageFile(first);
+
+      expect(t.statusBar.summary).toBe("ready to commit");
+    });
+
+    test("reconciling agrees with the running total", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.deleteTrackedFile(last);
+      const running = t.statusBar.summary;
+
+      t.sut.reconcile();
+
+      expect(t.statusBar.summary).toBe(running);
     });
   });
 

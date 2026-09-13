@@ -16,6 +16,18 @@ even with hundreds of repos.
 
 Pairs exceptionally well with [magit] for the commit step.
 
+## Status bar
+
+A status bar item summarizes the state across every repo in the workspace, using
+git's status letters:
+
+```text
+3M 1D 2?
+```
+
+3 [M]odified, 1 [D]eletion, 2 [?]untracked. When nothing remains it reads
+`ready to commit`.
+
 ## Commands
 
 All commands are prefixed `Mindful Stage:` in the command palette.

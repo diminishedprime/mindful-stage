@@ -39,7 +39,11 @@ export enum Mode {
   Staged = "staged",
 }
 
-export type Changes = Record<Mode, string[]> & { untracked: string[] };
+export type Changes = Record<Mode, string[]> & {
+  untracked: string[];
+  deleted: string[];
+  remaining: Record<string, number>;
+};
 
 export type Tracked = { known?: Changes; pending?: Promise<Changes> };
 
@@ -56,6 +60,10 @@ export interface Editor {
 
 export interface GitRefresher {
   refresh(repo: string): void;
+}
+
+export interface StatusBar extends Disposable {
+  show(summary: string): void;
 }
 
 export interface Notifier {

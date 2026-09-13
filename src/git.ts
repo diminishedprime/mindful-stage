@@ -28,7 +28,7 @@ export class SimpleGitClient implements Git {
     ]);
     return parseDiff(diff).flatMap((f) =>
       f.chunks.map((chunk) => ({
-        start: Math.max(1, chunk.newStart),
+        start: chunk.newLines === 0 ? chunk.newStart + 1 : chunk.newStart,
         count: chunk.newLines,
         from: f.from!,
         to: f.to!,

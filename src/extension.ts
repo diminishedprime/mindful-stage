@@ -9,6 +9,7 @@ import {
   NOTIFIER,
   REPO_FINDER,
   ROOTS,
+  STATUS_BAR,
   WATCHER,
 } from "./commands";
 import { SimpleGitClient } from "./git";
@@ -19,12 +20,16 @@ import type {
   GitRefresher,
   Notifier,
   RepoFinder,
+  StatusBar,
   Watcher,
 } from "./types";
 import { VscodeEditor } from "./vscode-shims/editor";
 import { VscodeGitRefresher } from "./vscode-shims/git-refresher";
 import { VscodeNotifier } from "./vscode-shims/notifier";
+import { VscodeStatusBar } from "./vscode-shims/status-bar";
 import { VscodeWatcher } from "./vscode-shims/watcher";
+
+const CATCH_UP_MS = 5 * 60 * 1000;
 
 const COMMANDS = [
   "nextUnstaged",
@@ -50,6 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   container.register<Notifier>(NOTIFIER, { useClass: VscodeNotifier });
   container.register<RepoFinder>(REPO_FINDER, { useClass: GlobRepoFinder });
+  container.register<StatusBar>(STATUS_BAR, { useClass: VscodeStatusBar });
   container.register<Watcher>(WATCHER, { useClass: VscodeWatcher });
   container.register<string[]>(ROOTS, {
     useValue: (vscode.workspace.workspaceFolders ?? []).map(
@@ -57,7 +63,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   });
   const commands = container.resolve(Commands);
+  const catchUp = setInterval(() => commands.reconcile(), CATCH_UP_MS);
   context.subscriptions.push(
+    { dispose: () => clearInterval(catchUp) },
     { dispose: () => commands.dispose() },
     ...COMMANDS.map((command) =>
       vscode.commands.registerCommand(`mindfulStage.${command}`, () =>

@@ -116,6 +116,18 @@ export class Polyrepo {
     await seen;
   }
 
+  async deleteTrackedLines(
+    file: string,
+    from: number,
+    to: number,
+  ): Promise<void> {
+    const seen = this.reactionTo(this.pathTo(file));
+    const lines = fs.readFileSync(this.pathTo(file), "utf8").split("\n");
+    lines.splice(from - 1, to - from + 1);
+    fs.writeFileSync(this.pathTo(file), lines.join("\n"));
+    await seen;
+  }
+
   async trackWithLfs(
     repo: string,
     pattern: string,

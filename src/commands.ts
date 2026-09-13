@@ -13,6 +13,7 @@ import {
   Mode,
   type Notifier,
   type RepoFinder,
+  type StatusBar,
   type Tracked,
   type Watcher,
 } from "./types";
@@ -23,11 +24,22 @@ export const GIT = Symbol("Git");
 export const GIT_REFRESHER = Symbol("GitRefresher");
 export const REPO_FINDER = Symbol("RepoFinder");
 export const ROOTS = Symbol("Roots");
+export const STATUS_BAR = Symbol("StatusBar");
 export const WATCHER = Symbol("Watcher");
+
+export const READMES = [
+  "readme.md",
+  "readme.markdown",
+  "readme.rst",
+  "readme.org",
+  "readme.txt",
+  "readme",
+] as const;
 
 @injectable()
 export class Commands {
   private readonly tracked = new Map<string, Tracked>();
+  private readonly totals = new Map<string, number>();
   private readonly gitignore = new Gitignore();
   private readonly watching: Promise<Disposable[]>;
   private repos: Promise<string[]>;
@@ -40,6 +52,7 @@ export class Commands {
     @inject(GIT_REFRESHER) private readonly gitRefresher: GitRefresher,
     @inject(NOTIFIER) private readonly notifier: Notifier,
     @inject(REPO_FINDER) private readonly finder: RepoFinder,
+    @inject(STATUS_BAR) private readonly statusBar: StatusBar,
     @inject(ROOTS) roots: string[],
     @inject(WATCHER) watcher: Watcher,
   ) {
@@ -120,6 +133,16 @@ export class Commands {
   async ready(): Promise<void> {
     await this.watching;
     await this.warm;
+  }
+
+  reconcile(): void {
+    this.totals.clear();
+    for (const { known } of this.tracked.values()) {
+      for (const [code, count] of Object.entries(known?.remaining ?? {})) {
+        this.bump(code, count);
+      }
+    }
+    this.statusBar.show(Commands.summarize(this.totals));
   }
 
   async repeatLast(): Promise<void> {
@@ -207,6 +230,7 @@ export class Commands {
     ]);
     await this.git.dispose();
     await this.finder.dispose();
+    await this.statusBar.dispose();
     await Promise.all((await this.watching).map((w) => w.dispose()));
     await inFlight;
   }
@@ -244,28 +268,68 @@ export class Commands {
   }
 
   private async land(target: string, line?: number): Promise<void> {
-    if (await Commands.isBinary(target)) {
-      await this.standIn(target);
+    const name = path.basename(target);
+    if (await this.isDeleted(target)) {
+      await this.standIn(target, `${name} was deleted`, "stage the deletion");
+    } else if (await Commands.isBinary(target)) {
+      await this.standIn(target, `can't open ${name}`, `handle ${name}`);
     } else {
       await this.editor.open(target, line);
     }
   }
 
-  private async standIn(binary: string): Promise<void> {
-    const repo = await this.repoOf(binary);
-    let fallback: string | undefined;
-    for (const tracked of await this.git.trackedFiles(repo)) {
-      const candidate = path.join(repo, tracked);
-      if (!(await Commands.isBinary(candidate))) {
-        fallback = candidate;
-        break;
+  private async isDeleted(file: string): Promise<boolean> {
+    const changes = await this.changesOf(await this.repoOf(file));
+    return changes.deleted.includes(file);
+  }
+
+  private async standIn(
+    target: string,
+    problem: string,
+    advice: string,
+  ): Promise<void> {
+    const repo = await this.repoOf(target);
+    const fallback = await this.firstOpenable(repo);
+    if (fallback === undefined) {
+      this.notifier.error(
+        `${problem}, and nothing in ${path.basename(repo)} can be opened instead, so ${advice} manually.`,
+      );
+      return;
+    }
+    this.notifier.error(
+      `${problem}, opening first tracked file so you can ${advice} manually.`,
+    );
+    await this.editor.open(fallback);
+  }
+
+  private async firstOpenable(repo: string): Promise<string | undefined> {
+    const tracked = await this.git.trackedFiles(repo);
+    const readme = Commands.readmeIn(tracked);
+    for (const file of readme === undefined ? tracked : [readme, ...tracked]) {
+      const candidate = path.join(repo, file);
+      if (await Commands.isOpenable(candidate)) {
+        return candidate;
       }
     }
-    const name = path.basename(binary);
-    this.notifier.error(
-      `can't open ${name}, opening first tracked file so you can handle ${name} manually.`,
-    );
-    await this.editor.open(fallback!);
+    return undefined;
+  }
+
+  private static readmeIn(tracked: string[]): string | undefined {
+    for (const name of READMES) {
+      const match = tracked.find((file) => file.toLowerCase() === name);
+      if (match !== undefined) {
+        return match;
+      }
+    }
+    return undefined;
+  }
+
+  private static async isOpenable(file: string): Promise<boolean> {
+    try {
+      return !(await Commands.isBinary(file));
+    } catch {
+      return false;
+    }
   }
 
   private async hintIfUntracked(file: string): Promise<void> {
@@ -360,6 +424,7 @@ export class Commands {
   private refresh(repo: string, tracked: Tracked): Promise<Changes> {
     tracked.pending ??= this.changes(repo).then(
       (changes) => {
+        this.retotal(tracked.known, changes);
         tracked.known = changes;
         tracked.pending = undefined;
         return changes;
@@ -400,6 +465,39 @@ export class Commands {
     await Promise.allSettled([this.refresh(repo, tracked)]);
   }
 
+  private retotal(before: Changes | undefined, after: Changes): void {
+    for (const [code, count] of Object.entries(before?.remaining ?? {})) {
+      this.bump(code, -count);
+    }
+    for (const [code, count] of Object.entries(after.remaining)) {
+      this.bump(code, count);
+    }
+    this.statusBar.show(Commands.summarize(this.totals));
+  }
+
+  private bump(code: string, by: number): void {
+    const total = (this.totals.get(code) ?? 0) + by;
+    if (total === 0) {
+      this.totals.delete(code);
+    } else {
+      this.totals.set(code, total);
+    }
+  }
+
+  private static summarize(totals: Map<string, number>): string {
+    if (totals.size === 0) {
+      return "ready to commit";
+    }
+    return [...totals]
+      .sort(([a], [b]) => (Commands.rank(a) < Commands.rank(b) ? -1 : 1))
+      .map(([code, count]) => `${count}${code}`)
+      .join(" ");
+  }
+
+  private static rank(code: string): string {
+    return code === "?" ? "~" : code;
+  }
+
   private static insideGitDir(file: string): boolean {
     return file.includes(`${path.sep}.git${path.sep}`);
   }
@@ -413,8 +511,17 @@ export class Commands {
 
   private async changes(repo: string): Promise<Changes> {
     const { files, not_added } = await this.git.status(repo);
+    const remaining: Record<string, number> = {};
+    for (const file of files) {
+      if (file.working_dir !== " ") {
+        remaining[file.working_dir] = (remaining[file.working_dir] ?? 0) + 1;
+      }
+    }
     const unstaged = files
-      .filter((f) => f.working_dir !== " " && f.working_dir !== "D")
+      .filter((f) => f.working_dir !== " ")
+      .map((f) => f.path);
+    const deleted = files
+      .filter((f) => f.working_dir === "D")
       .map((f) => f.path);
     const staged = files
       .filter((f) => f.index !== " " && f.index !== "?" && f.index !== "D")
@@ -432,6 +539,8 @@ export class Commands {
       [Mode.Unstaged]: absolute(unstaged),
       [Mode.Staged]: absolute(staged),
       untracked: absolute(not_added),
+      deleted: absolute(deleted),
+      remaining,
     };
   }
 
