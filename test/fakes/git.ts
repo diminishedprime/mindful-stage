@@ -16,6 +16,7 @@ export class GatedGit implements Git {
   private held = new Set<string>();
   private readonly failing = new Set<string>();
   private readonly aborter = new AbortController();
+  private readonly statuses = new Map<string, number>();
 
   constructor(
     private readonly real: Git,
@@ -34,7 +35,12 @@ export class GatedGit implements Git {
     this.failing.add(repo);
   }
 
+  statusCalls(repo: string): number {
+    return this.statuses.get(repo) ?? 0;
+  }
+
   async status(repo: string): Promise<StatusResult> {
+    this.statuses.set(repo, this.statusCalls(repo) + 1);
     if (this.failing.delete(repo)) {
       throw new Error(`simulated git failure in ${repo}`);
     }

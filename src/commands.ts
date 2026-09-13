@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { inject, injectable } from "tsyringe";
+import Gitignore from "gitignore-fs";
 import {
   type Changes,
   Direction,
@@ -27,6 +28,7 @@ export const WATCHER = Symbol("Watcher");
 @injectable()
 export class Commands {
   private readonly tracked = new Map<string, Tracked>();
+  private readonly gitignore = new Gitignore();
   private readonly watching: Promise<Disposable[]>;
   private repos: Promise<string[]>;
   private readonly warm: Promise<void>;
@@ -385,9 +387,28 @@ export class Commands {
     if (repo === undefined) {
       return;
     }
+    if (Commands.isIgnoreRuleFile(changed)) {
+      this.gitignore.clearCache();
+    } else if (
+      !Commands.insideGitDir(changed) &&
+      (await this.gitignore.ignores(changed))
+    ) {
+      return;
+    }
     const tracked = this.tracked.get(repo)!;
     await Promise.allSettled([tracked.pending]);
     await Promise.allSettled([this.refresh(repo, tracked)]);
+  }
+
+  private static insideGitDir(file: string): boolean {
+    return file.includes(`${path.sep}.git${path.sep}`);
+  }
+
+  private static isIgnoreRuleFile(file: string): boolean {
+    return (
+      path.basename(file) === ".gitignore" ||
+      file.endsWith(path.join(".git", "info", "exclude"))
+    );
   }
 
   private async changes(repo: string): Promise<Changes> {

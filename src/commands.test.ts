@@ -380,6 +380,17 @@ describe.concurrent("Commands", () => {
     });
   });
 
+  describe("edits to files git ignores", () => {
+    test("do not refresh the repo", async ({ t }) => {
+      const repo = t.polyrepo.repoPath(Polyrepo.ARGO);
+      const before = t.git.statusCalls(repo);
+
+      await t.polyrepo.createIgnoredFile(Polyrepo.ARGO, "debug.log");
+
+      expect(t.git.statusCalls(repo)).toBe(before);
+    });
+  });
+
   describe("after git fails once for a repo", () => {
     test("the next change in that repo is still found", async ({ t }) => {
       t.git.failNext(t.polyrepo.repoPath(Polyrepo.ARGO));
