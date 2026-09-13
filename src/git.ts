@@ -1,7 +1,5 @@
+import { spawn } from "child_process";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
-import * as fs from "fs/promises";
-import * as os from "os";
-import * as path from "path";
 import parseDiff from "parse-diff";
 import { type Git, type Hunk, Mode } from "./types";
 
@@ -40,14 +38,11 @@ export class SimpleGitClient implements Git {
   }
 
   async stage(repo: string, hunk: Hunk): Promise<void> {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mindful-stage-"));
-    const file = path.join(dir, "hunk.patch");
-    try {
-      await fs.writeFile(file, SimpleGitClient.patchFor(hunk));
-      await this.git(repo).applyPatch(file, ["--cached", "--unidiff-zero"]);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    await this.withStdin(
+      repo,
+      ["apply", "--cached", "--unidiff-zero"],
+      SimpleGitClient.patchFor(hunk),
+    );
   }
 
   async trackedFiles(repo: string): Promise<string[]> {
@@ -57,14 +52,9 @@ export class SimpleGitClient implements Git {
   }
 
   async hashObject(repo: string, content: string): Promise<string> {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mindful-stage-"));
-    const file = path.join(dir, "blob");
-    try {
-      await fs.writeFile(file, content);
-      return (await this.git(repo).hashObject(file, true)).trim();
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
+    return (
+      await this.withStdin(repo, ["hash-object", "-w", "--stdin"], content)
+    ).trim();
   }
 
   async addToIndex(repo: string, file: string, hash: string): Promise<void> {
@@ -88,6 +78,24 @@ export class SimpleGitClient implements Git {
       ...hunk.chunk.changes.map((change) => change.content),
       "",
     ].join("\n");
+  }
+
+  private withStdin(repo: string, args: string[], input: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("git", ["--no-optional-locks", ...args], {
+        cwd: repo,
+        signal: this.aborter.signal,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+      child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+      child.on("error", reject);
+      child.on("close", (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(stderr.trim())),
+      );
+      child.stdin.end(input);
+    });
   }
 
   private git(repo: string): SimpleGit {
