@@ -7,12 +7,14 @@ export class VscodeStatusBar implements StatusBar {
   );
 
   constructor() {
-    this.item.tooltip = "Mindful Stage: unstaged work across the workspace";
+    this.item.name = "Mindful Stage";
+    this.item.command = "mindfulStage.pickRepo";
     this.item.show();
   }
 
-  show(summary: string): void {
+  show(summary: string, detail: string): void {
     this.item.text = `$(git-commit) ${summary}`;
+    this.item.tooltip = new vscode.MarkdownString(detail);
   }
 
   async dispose(): Promise<void> {

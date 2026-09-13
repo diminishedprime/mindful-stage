@@ -43,6 +43,8 @@ export type Changes = Record<Mode, string[]> & {
   untracked: string[];
   deleted: string[];
   remaining: Record<string, number>;
+  ahead: number;
+  upstream: boolean;
 };
 
 export type Tracked = { known?: Changes; pending?: Promise<Changes> };
@@ -63,7 +65,13 @@ export interface GitRefresher {
 }
 
 export interface StatusBar extends Disposable {
-  show(summary: string): void;
+  show(summary: string, detail: string): void;
+}
+
+export type Choice = { label: string; detail: string; repo?: string };
+
+export interface Picker {
+  pick(choices: Choice[]): Promise<Choice | undefined>;
 }
 
 export interface Notifier {

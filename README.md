@@ -22,11 +22,16 @@ A status bar item summarizes the state across every repo in the workspace, using
 git's status letters:
 
 ```text
-3M 1D 2?
+3M 1D 2? 2 unpushed 1 unlinked
 ```
 
-3 [M]odified, 1 [D]eletion, 2 [?]untracked. When nothing remains it reads
-`ready to commit`.
+3 [M]odified, 1 [D]eletion, 2 [?]untracked
+
+With everything staged, reads `ready to commit` With no outstanding work, reads
+`No changes`
+
+Hovering on the status bar shows the breakdown per repo. And clicking on it
+opens a list to choose a repo to go directly to.
 
 ## Commands
 
@@ -47,6 +52,7 @@ All commands are prefixed `Mindful Stage:` in the command palette.
 | `mindfulStage.stageHunkAtCursor` | Stage the unstaged hunk under the cursor                                            |
 | `mindfulStage.startTracking`     | Add an untracked file (stages just line 1, so you can review the rest hunk-by-hunk) |
 | `mindfulStage.repeatLast`        | Repeat the last navigation                                                          |
+| `mindfulStage.pickRepo`          | Pick from the repos with outstanding work and jump to one                           |
 
 ## Install
 

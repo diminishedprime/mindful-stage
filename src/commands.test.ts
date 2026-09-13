@@ -7,6 +7,7 @@ import {
   GIT,
   GIT_REFRESHER,
   NOTIFIER,
+  PICKER,
   READMES,
   REPO_FINDER,
   ROOTS,
@@ -20,6 +21,7 @@ import type {
   Git,
   GitRefresher,
   Notifier,
+  Picker,
   RepoFinder,
   StatusBar,
   Watcher,
@@ -28,6 +30,7 @@ import { FakeEditor } from "../test/fakes/editor";
 import { GatedGit } from "../test/fakes/git";
 import { FakeGitRefresher } from "../test/fakes/git-refresher";
 import { FakeNotifier } from "../test/fakes/notifier";
+import { FakePicker } from "../test/fakes/picker";
 import { GatedRepoFinder } from "../test/fakes/repo-finder";
 import { FakeStatusBar } from "../test/fakes/status-bar";
 import { SettlingWatcher } from "../test/fakes/watcher";
@@ -47,6 +50,7 @@ const test = base.extend<{
   git: GatedGit;
   gitRefresher: FakeGitRefresher;
   finder: GatedRepoFinder;
+  picker: FakePicker;
   statusBar: FakeStatusBar;
   watcher: SettlingWatcher;
   sut: Commands;
@@ -57,6 +61,7 @@ const test = base.extend<{
     git: GatedGit;
     gitRefresher: FakeGitRefresher;
     finder: GatedRepoFinder;
+    picker: FakePicker;
     statusBar: FakeStatusBar;
     watcher: SettlingWatcher;
     sut: Commands;
@@ -94,11 +99,24 @@ const test = base.extend<{
   finder: async ({}, use) => {
     await use(new GatedRepoFinder(new GlobRepoFinder()));
   },
+  picker: async ({}, use) => {
+    await use(new FakePicker());
+  },
   statusBar: async ({}, use) => {
     await use(new FakeStatusBar());
   },
   sut: async (
-    { roots, editor, notifier, git, gitRefresher, finder, statusBar, watcher },
+    {
+      roots,
+      editor,
+      notifier,
+      git,
+      gitRefresher,
+      finder,
+      picker,
+      statusBar,
+      watcher,
+    },
     use,
   ) => {
     const sut = container
@@ -107,6 +125,7 @@ const test = base.extend<{
       .register<Notifier>(NOTIFIER, { useValue: notifier })
       .register<Git>(GIT, { useValue: git })
       .register<GitRefresher>(GIT_REFRESHER, { useValue: gitRefresher })
+      .register<Picker>(PICKER, { useValue: picker })
       .register<RepoFinder>(REPO_FINDER, { useValue: finder })
       .register<StatusBar>(STATUS_BAR, { useValue: statusBar })
       .register<string[]>(ROOTS, { useValue: roots })
@@ -124,6 +143,7 @@ const test = base.extend<{
       git,
       gitRefresher,
       finder,
+      picker,
       statusBar,
       watcher,
       sut,
@@ -138,6 +158,7 @@ const test = base.extend<{
       git,
       gitRefresher,
       finder,
+      picker,
       statusBar,
       watcher,
       sut,
@@ -436,6 +457,82 @@ describe.concurrent("Commands", () => {
       expect(t.editor.opened.map((p) => p.path)).toEqual([
         t.polyrepo.pathTo(`${Polyrepo.CERT_MANAGER}/${readme}`),
       ]);
+    });
+  });
+
+  describe("picking a repo from the status bar", () => {
+    test("offers every repo with outstanding work and its state", async ({
+      t,
+    }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.commitWithoutPushing(
+        Polyrepo.MINDFUL_STAGE,
+        "README.md",
+      );
+
+      await t.sut.pickRepo();
+
+      expect(t.picker.choices.map((c) => [c.label, c.detail])).toEqual([
+        [Polyrepo.ARGO, "1M"],
+        [Polyrepo.MINDFUL_STAGE, "1 unpushed commits"],
+      ]);
+    });
+
+    test("lands on the chosen repo's first unstaged file", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.modifyTrackedFile(last);
+      t.picker.picks(Polyrepo.MINDFUL_STAGE);
+
+      await t.sut.pickRepo();
+
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(last),
+      ]);
+    });
+
+    test("lands on a readme when the repo only has unpushed commits", async ({
+      t,
+    }) => {
+      await t.polyrepo.commitWithoutPushing(
+        Polyrepo.MINDFUL_STAGE,
+        "README.md",
+      );
+      t.picker.picks(Polyrepo.MINDFUL_STAGE);
+
+      await t.sut.pickRepo();
+
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(Polyrepo.MINDFUL_STAGE_README),
+      ]);
+    });
+
+    test("declining the pick opens nothing", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+
+      await t.sut.pickRepo();
+
+      expect(t.editor.opened).toEqual([]);
+    });
+
+    test("with nothing outstanding says so in the pick itself", async ({
+      t,
+    }) => {
+      await t.sut.pickRepo();
+
+      expect(t.picker.choices.map((c) => c.label)).toEqual([
+        "No outstanding changes.",
+      ]);
+      expect(t.notifier.notices).toEqual([]);
+    });
+
+    test("choosing the nothing-outstanding entry opens nothing", async ({
+      t,
+    }) => {
+      t.picker.picksFirst();
+
+      await t.sut.pickRepo();
+
+      expect(t.editor.opened).toEqual([]);
     });
   });
 
@@ -832,8 +929,35 @@ describe.concurrent("Commands", () => {
   });
 
   describe("the status bar summary", () => {
-    test("with nothing changed says it is ready to commit", async ({ t }) => {
+    test("with nothing changed anywhere says there are no changes", async ({
+      t,
+    }) => {
+      expect(t.statusBar.summary).toBe("No changes");
+    });
+
+    test("with everything staged says it is ready to commit", async ({ t }) => {
+      await t.polyrepo.stageTrackedChange(first);
+
       expect(t.statusBar.summary).toBe("ready to commit");
+    });
+
+    test("counts repos holding unpushed commits", async ({ t }) => {
+      await t.polyrepo.commitWithoutPushing(Polyrepo.ARGO, "argo.yaml");
+
+      expect(t.statusBar.summary).toBe("1 unpushed");
+    });
+
+    test("counts repos with no upstream at all", async ({ t }) => {
+      await t.polyrepo.removeUpstream(Polyrepo.ARGO);
+
+      expect(t.statusBar.summary).toBe("1 unlinked");
+    });
+
+    test("shows unpushed alongside unstaged work", async ({ t }) => {
+      await t.polyrepo.commitWithoutPushing(Polyrepo.ARGO, "argo.yaml");
+      await t.polyrepo.modifyTrackedFile(last);
+
+      expect(t.statusBar.summary).toBe("1M 1 unpushed");
     });
 
     test("counts unstaged work by its git status letter", async ({ t }) => {
@@ -850,13 +974,32 @@ describe.concurrent("Commands", () => {
       expect(t.statusBar.summary).toBe("1D");
     });
 
-    test("staging the only change makes it ready again", async ({ t }) => {
+    test("staging the only change makes it ready to commit", async ({ t }) => {
       await t.polyrepo.modifyTrackedFile(first);
       expect(t.statusBar.summary).toBe("1M");
 
       await t.polyrepo.stageFile(first);
 
       expect(t.statusBar.summary).toBe("ready to commit");
+    });
+
+    test("breaks the work down per repo on hover", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.commitWithoutPushing(
+        Polyrepo.MINDFUL_STAGE,
+        "README.md",
+      );
+
+      expect(t.statusBar.detail).toBe(
+        [
+          `- \`${Polyrepo.ARGO}\` 1M`,
+          `- \`${Polyrepo.MINDFUL_STAGE}\` 1 unpushed commits`,
+        ].join("\n"),
+      );
+    });
+
+    test("hover says so when nothing is outstanding", async ({ t }) => {
+      expect(t.statusBar.detail).toBe("No outstanding changes.");
     });
 
     test("reconciling agrees with the running total", async ({ t }) => {

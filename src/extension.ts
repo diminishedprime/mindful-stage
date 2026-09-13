@@ -7,6 +7,7 @@ import {
   GIT,
   GIT_REFRESHER,
   NOTIFIER,
+  PICKER,
   REPO_FINDER,
   ROOTS,
   STATUS_BAR,
@@ -19,6 +20,7 @@ import type {
   Git,
   GitRefresher,
   Notifier,
+  Picker,
   RepoFinder,
   StatusBar,
   Watcher,
@@ -26,6 +28,7 @@ import type {
 import { VscodeEditor } from "./vscode-shims/editor";
 import { VscodeGitRefresher } from "./vscode-shims/git-refresher";
 import { VscodeNotifier } from "./vscode-shims/notifier";
+import { VscodePicker } from "./vscode-shims/picker";
 import { VscodeStatusBar } from "./vscode-shims/status-bar";
 import { VscodeWatcher } from "./vscode-shims/watcher";
 
@@ -43,6 +46,7 @@ const COMMANDS = [
   "nextStagedRepo",
   "prevStagedRepo",
   "repeatLast",
+  "pickRepo",
   "stageHunkAtCursor",
   "startTracking",
 ] as const;
@@ -54,6 +58,7 @@ export function activate(context: vscode.ExtensionContext): void {
     useClass: VscodeGitRefresher,
   });
   container.register<Notifier>(NOTIFIER, { useClass: VscodeNotifier });
+  container.register<Picker>(PICKER, { useClass: VscodePicker });
   container.register<RepoFinder>(REPO_FINDER, { useClass: GlobRepoFinder });
   container.register<StatusBar>(STATUS_BAR, { useClass: VscodeStatusBar });
   container.register<Watcher>(WATCHER, { useClass: VscodeWatcher });

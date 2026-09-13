@@ -70,6 +70,10 @@
       {
         "command": "mindfulStage.stageHunkAtCursor",
         "title": "Mindful Stage: Stage Unstaged Hunk at Cursor"
+      },
+      {
+        "command": "mindfulStage.pickRepo",
+        "title": "Mindful Stage: Pick a Repo With Outstanding Work"
       }
     ]
   },

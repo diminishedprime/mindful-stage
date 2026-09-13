@@ -85,6 +85,43 @@ export class Polyrepo {
     await git.addConfig("user.name", "test");
     await git.add(".");
     await git.commit("init");
+    await Polyrepo.setUpstream(cwd);
+  }
+
+  private static async setUpstream(cwd: string): Promise<void> {
+    const git = simpleGit(cwd);
+    const branch = (await git.raw("symbolic-ref", "--short", "HEAD")).trim();
+    await git.addConfig("remote.origin.url", `${cwd}.origin`);
+    await git.addConfig(
+      "remote.origin.fetch",
+      "+refs/heads/*:refs/remotes/origin/*",
+    );
+    await git.addConfig(`branch.${branch}.remote`, "origin");
+    await git.addConfig(`branch.${branch}.merge`, `refs/heads/${branch}`);
+    await git.raw("update-ref", `refs/remotes/origin/${branch}`, "HEAD");
+  }
+
+  async commitWithoutPushing(repo: string, file: string): Promise<void> {
+    const cwd = this.repoPath(repo);
+    const git = simpleGit(cwd);
+    const branch = (await git.raw("symbolic-ref", "--short", "HEAD")).trim();
+    fs.appendFileSync(path.join(cwd, file), "committed\n");
+    await git.add(file);
+    const seen = this.reactionTo(
+      path.join(cwd, ".git", "refs", "heads", branch),
+    );
+    await git.commit("unpushed work");
+    await seen;
+  }
+
+  async removeUpstream(repo: string): Promise<void> {
+    const cwd = this.repoPath(repo);
+    const git = simpleGit(cwd);
+    const branch = (await git.raw("symbolic-ref", "--short", "HEAD")).trim();
+    const seen = this.reactionTo(path.join(cwd, ".git", "config"));
+    await git.raw("branch", "--unset-upstream");
+    await git.raw("update-ref", "-d", `refs/remotes/origin/${branch}`);
+    await seen;
   }
 
   repoPath(repo: string): string {

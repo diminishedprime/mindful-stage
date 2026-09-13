@@ -4,6 +4,7 @@ import { inject, injectable } from "tsyringe";
 import Gitignore from "gitignore-fs";
 import {
   type Changes,
+  type Choice,
   Direction,
   type Disposable,
   type Editor,
@@ -12,6 +13,7 @@ import {
   type Hunk,
   Mode,
   type Notifier,
+  type Picker,
   type RepoFinder,
   type StatusBar,
   type Tracked,
@@ -20,6 +22,7 @@ import {
 
 export const EDITOR = Symbol("Editor");
 export const NOTIFIER = Symbol("Notifier");
+export const PICKER = Symbol("Picker");
 export const GIT = Symbol("Git");
 export const GIT_REFRESHER = Symbol("GitRefresher");
 export const REPO_FINDER = Symbol("RepoFinder");
@@ -40,6 +43,9 @@ export const READMES = [
 export class Commands {
   private readonly tracked = new Map<string, Tracked>();
   private readonly totals = new Map<string, number>();
+  private unpushed = 0;
+  private unlinked = 0;
+  private stagedRepos = 0;
   private readonly gitignore = new Gitignore();
   private readonly watching: Promise<Disposable[]>;
   private repos: Promise<string[]>;
@@ -51,9 +57,10 @@ export class Commands {
     @inject(GIT) private readonly git: Git,
     @inject(GIT_REFRESHER) private readonly gitRefresher: GitRefresher,
     @inject(NOTIFIER) private readonly notifier: Notifier,
+    @inject(PICKER) private readonly picker: Picker,
     @inject(REPO_FINDER) private readonly finder: RepoFinder,
     @inject(STATUS_BAR) private readonly statusBar: StatusBar,
-    @inject(ROOTS) roots: string[],
+    @inject(ROOTS) private readonly roots: string[],
     @inject(WATCHER) watcher: Watcher,
   ) {
     this.watching = Promise.all(
@@ -137,12 +144,50 @@ export class Commands {
 
   reconcile(): void {
     this.totals.clear();
+    this.unpushed = 0;
+    this.unlinked = 0;
+    this.stagedRepos = 0;
     for (const { known } of this.tracked.values()) {
-      for (const [code, count] of Object.entries(known?.remaining ?? {})) {
+      if (known === undefined) {
+        continue;
+      }
+      for (const [code, count] of Object.entries(known.remaining)) {
         this.bump(code, count);
       }
+      this.unpushed += Commands.delta(false, known.ahead > 0);
+      this.unlinked += Commands.delta(false, !known.upstream);
+      this.stagedRepos += Commands.delta(false, known[Mode.Staged].length > 0);
     }
-    this.statusBar.show(Commands.summarize(this.totals));
+    this.statusBar.show(this.summarize(), this.detail());
+  }
+
+  async pickRepo(): Promise<void> {
+    await this.watching;
+    const choices = this.outstanding();
+    const chosen = await this.picker.pick(
+      choices.length === 0
+        ? [{ label: "No outstanding changes.", detail: "" }]
+        : choices,
+    );
+    if (chosen?.repo === undefined) {
+      return;
+    }
+    await this.landIn(chosen.repo);
+  }
+
+  private async landIn(repo: string): Promise<void> {
+    const changes = await this.changesOf(repo);
+    const target =
+      changes[Mode.Unstaged][0] ??
+      changes[Mode.Staged][0] ??
+      (await this.firstOpenable(repo));
+    if (target === undefined) {
+      this.notifier.error(`nothing can be opened in ${path.basename(repo)}`);
+      return;
+    }
+    const from = this.editor.active()?.path;
+    await this.land(target);
+    await this.announceCrossing(from, target);
   }
 
   async repeatLast(): Promise<void> {
@@ -424,9 +469,10 @@ export class Commands {
   private refresh(repo: string, tracked: Tracked): Promise<Changes> {
     tracked.pending ??= this.changes(repo).then(
       (changes) => {
-        this.retotal(tracked.known, changes);
+        const before = tracked.known;
         tracked.known = changes;
         tracked.pending = undefined;
+        this.retotal(before, changes);
         return changes;
       },
       (error) => {
@@ -472,7 +518,20 @@ export class Commands {
     for (const [code, count] of Object.entries(after.remaining)) {
       this.bump(code, count);
     }
-    this.statusBar.show(Commands.summarize(this.totals));
+    this.unpushed += Commands.delta((before?.ahead ?? 0) > 0, after.ahead > 0);
+    this.unlinked += Commands.delta(
+      before !== undefined && !before.upstream,
+      !after.upstream,
+    );
+    this.stagedRepos += Commands.delta(
+      (before?.[Mode.Staged].length ?? 0) > 0,
+      after[Mode.Staged].length > 0,
+    );
+    this.statusBar.show(this.summarize(), this.detail());
+  }
+
+  private static delta(before: boolean, after: boolean): number {
+    return (after ? 1 : 0) - (before ? 1 : 0);
   }
 
   private bump(code: string, by: number): void {
@@ -484,14 +543,55 @@ export class Commands {
     }
   }
 
-  private static summarize(totals: Map<string, number>): string {
-    if (totals.size === 0) {
-      return "ready to commit";
-    }
-    return [...totals]
+  private summarize(): string {
+    const letters = [...this.totals]
       .sort(([a], [b]) => (Commands.rank(a) < Commands.rank(b) ? -1 : 1))
       .map(([code, count]) => `${count}${code}`)
       .join(" ");
+    const ready =
+      letters === "" && this.stagedRepos > 0 ? "ready to commit" : "";
+    const unpushed = this.unpushed > 0 ? `${this.unpushed} unpushed` : "";
+    const unlinked = this.unlinked > 0 ? `${this.unlinked} unlinked` : "";
+    return (
+      [letters, ready, unpushed, unlinked]
+        .filter((part) => part !== "")
+        .join(" ") || "No changes"
+    );
+  }
+
+  private outstanding(): Choice[] {
+    return [...this.tracked]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .flatMap(([repo, { known }]) => {
+        const detail = known === undefined ? "" : Commands.stateOf(known);
+        return detail === "" ? [] : [{ label: this.label(repo), detail, repo }];
+      });
+  }
+
+  private detail(): string {
+    const rows = this.outstanding().map(
+      ({ label, detail }) => `- \`${label}\` ${detail}`,
+    );
+    return rows.length === 0 ? "No outstanding changes." : rows.join("\n");
+  }
+
+  private static stateOf(known: Changes): string {
+    const letters = Object.entries(known.remaining)
+      .sort(([a], [b]) => (Commands.rank(a) < Commands.rank(b) ? -1 : 1))
+      .map(([code, count]) => `${count}${code}`)
+      .join(" ");
+    const ready =
+      letters === "" && known[Mode.Staged].length > 0 ? "ready to commit" : "";
+    const unpushed = known.ahead > 0 ? `${known.ahead} unpushed commits` : "";
+    const unlinked = known.upstream ? "" : "no upstream";
+    return [letters, ready, unpushed, unlinked]
+      .filter((part) => part !== "")
+      .join(" ");
+  }
+
+  private label(repo: string): string {
+    const root = this.roots.find((r) => repo.startsWith(r + path.sep));
+    return root === undefined ? repo : path.relative(root, repo);
   }
 
   private static rank(code: string): string {
@@ -510,7 +610,7 @@ export class Commands {
   }
 
   private async changes(repo: string): Promise<Changes> {
-    const { files, not_added } = await this.git.status(repo);
+    const { files, not_added, ahead, tracking } = await this.git.status(repo);
     const remaining: Record<string, number> = {};
     for (const file of files) {
       if (file.working_dir !== " ") {
@@ -541,6 +641,8 @@ export class Commands {
       untracked: absolute(not_added),
       deleted: absolute(deleted),
       remaining,
+      ahead,
+      upstream: tracking !== null,
     };
   }
 
