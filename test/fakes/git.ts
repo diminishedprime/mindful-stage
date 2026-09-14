@@ -1,5 +1,5 @@
 import type { StatusResult } from "simple-git";
-import type { Git, Hunk, Mode } from "../../src/types";
+import type { Diff, Git, Hunk, Mode } from "../../src/types";
 
 // Lets a test check that a command only interacts with the repos it should
 //
@@ -58,7 +58,7 @@ export class GatedGit implements Git {
     return this.real.lfsPaths(repo, paths);
   }
 
-  hunks(repo: string, file: string, mode: Mode): Promise<Hunk[]> {
+  hunks(repo: string, file: string, mode: Mode): Promise<Diff> {
     return this.real.hunks(repo, file, mode);
   }
 

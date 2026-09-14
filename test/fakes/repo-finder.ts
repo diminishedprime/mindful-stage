@@ -22,8 +22,8 @@ export class GatedRepoFinder implements RepoFinder {
     this.held = true;
   }
 
-  async find(root: string): Promise<string[]> {
-    const result = await this.real.find(root);
+  async findReposUnderWorkspace(root: string): Promise<string[]> {
+    const result = await this.real.findReposUnderWorkspace(root);
     if (this.held) {
       const { signal } = this.aborter;
       await new Promise<never>((_, reject) =>

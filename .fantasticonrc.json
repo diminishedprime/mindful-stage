@@ -1,0 +1,18 @@
+{
+  "inputDir": "assets/icons",
+  "outputDir": "assets",
+  "name": "mindful-stage",
+  "fontTypes": [
+    "woff"
+  ],
+  "assetTypes": [
+    "json"
+  ],
+  "codepoints": {
+    "clean": 61701,
+    "missing-upstream": 61702,
+    "ms": 61697,
+    "ready": 61700,
+    "unpushed": 61698
+  }
+}

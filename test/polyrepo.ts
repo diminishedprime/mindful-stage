@@ -200,6 +200,18 @@ export class Polyrepo {
     await seen;
   }
 
+  async removeRepo(repo: string): Promise<void> {
+    const cwd = this.repoPath(repo);
+    const seen = this.reactionTo(path.join(cwd, ".git"));
+    fs.rmSync(cwd, { recursive: true, force: true });
+    this.repos.delete(repo);
+    await seen;
+  }
+
+  deleteTrackedFileWithoutSettling(file: string): void {
+    fs.rmSync(this.pathTo(file));
+  }
+
   async deleteTrackedFile(file: string): Promise<void> {
     const seen = this.reactionTo(this.pathTo(file));
     fs.rmSync(this.pathTo(file));

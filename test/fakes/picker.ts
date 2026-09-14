@@ -9,11 +9,7 @@ export class FakePicker implements Picker {
   }
 
   picks(repo: string): void {
-    this.choose = (choices) => choices.find((c) => c.repo?.endsWith(repo));
-  }
-
-  picksFirst(): void {
-    this.choose = (choices) => choices[0];
+    this.choose = (choices) => choices.find((c) => c.repo.endsWith(repo));
   }
 
   async pick(choices: Choice[]): Promise<Choice | undefined> {

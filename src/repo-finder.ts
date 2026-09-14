@@ -6,7 +6,7 @@ import type { RepoFinder } from "./types";
 export class GlobRepoFinder implements RepoFinder {
   private readonly walks = new Set<Readable>();
 
-  async find(root: string): Promise<string[]> {
+  async findReposUnderWorkspace(root: string): Promise<string[]> {
     const walk = fg.stream("**/.git", {
       cwd: root,
       onlyDirectories: true,

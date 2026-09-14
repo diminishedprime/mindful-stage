@@ -1,7 +1,8 @@
 import { spawn } from "child_process";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import parseDiff from "parse-diff";
-import { type Git, type Hunk, Mode } from "./types";
+import { Ring } from "./ring";
+import { type Diff, type Git, type Hunk, Mode } from "./types";
 
 export class SimpleGitClient implements Git {
   private readonly aborter = new AbortController();
@@ -19,14 +20,14 @@ export class SimpleGitClient implements Git {
     );
   }
 
-  async hunks(repo: string, file: string, mode: Mode): Promise<Hunk[]> {
+  async hunks(repo: string, file: string, mode: Mode): Promise<Diff> {
     const diff = await this.git(repo).diff([
       "-U0",
       ...(mode === Mode.Staged ? ["--cached"] : []),
       "--",
       file,
     ]);
-    return parseDiff(diff).flatMap((f) =>
+    const all = parseDiff(diff).flatMap((f) =>
       f.chunks.map((chunk) => ({
         start: chunk.newLines === 0 ? chunk.newStart + 1 : chunk.newStart,
         count: chunk.newLines,
@@ -35,6 +36,7 @@ export class SimpleGitClient implements Git {
         chunk,
       })),
     );
+    return Ring.keyed(all, (hunk) => hunk.start);
   }
 
   async stage(repo: string, hunk: Hunk): Promise<void> {

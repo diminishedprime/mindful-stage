@@ -1,0 +1,17 @@
+export const EDITOR = Symbol("Editor");
+export const NAVIGATION = Symbol("Navigation");
+export const NOTIFIER = Symbol("Notifier");
+export const PICKER = Symbol("Picker");
+export const GIT = Symbol("Git");
+export const GIT_REFRESHER = Symbol("GitRefresher");
+export const REPO_FINDER = Symbol("RepoFinder");
+export const REPO_LISTENER = Symbol("RepoListener");
+export const REPO_PICKER = Symbol("RepoPicker");
+export const REPOS = Symbol("Repos");
+export const WORKSPACE_FOLDERS = Symbol("WorkspaceFolders");
+export const STAGING = Symbol("Staging");
+export const STATUS_BAR = Symbol("StatusBar");
+export const TALLY = Symbol("Tally");
+export const WATCHER = Symbol("Watcher");
+export const WORKSPACE = Symbol("Workspace");
+export const WORKSPACE_FILE_WATCHER = Symbol("WorkspaceFileWatcher");

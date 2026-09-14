@@ -13,7 +13,7 @@ export class VscodeStatusBar implements StatusBar {
   }
 
   show(summary: string, detail: string): void {
-    this.item.text = `$(git-commit) ${summary}`;
+    this.item.text = `$(mindful-stage-ms) ${summary}`;
     this.item.tooltip = new vscode.MarkdownString(detail);
   }
 

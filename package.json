@@ -8,9 +8,9 @@
   "engines": {
     "vscode": "^1.137.0"
   },
-  "main": "./dist/extension.js",
+  "main": "./dist/main.js",
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/main.js",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "pnpm build"
   },
@@ -75,7 +75,44 @@
         "command": "mindfulStage.pickRepo",
         "title": "Mindful Stage: Pick a Repo With Outstanding Work"
       }
-    ]
+    ],
+    "icons": {
+      "mindful-stage-clean": {
+        "description": "Mindful Stage clean icon",
+        "default": {
+          "fontPath": "assets/mindful-stage.woff",
+          "fontCharacter": "\\F105"
+        }
+      },
+      "mindful-stage-missing-upstream": {
+        "description": "Mindful Stage missing-upstream icon",
+        "default": {
+          "fontPath": "assets/mindful-stage.woff",
+          "fontCharacter": "\\F106"
+        }
+      },
+      "mindful-stage-ms": {
+        "description": "Mindful Stage ms icon",
+        "default": {
+          "fontPath": "assets/mindful-stage.woff",
+          "fontCharacter": "\\F101"
+        }
+      },
+      "mindful-stage-ready": {
+        "description": "Mindful Stage ready icon",
+        "default": {
+          "fontPath": "assets/mindful-stage.woff",
+          "fontCharacter": "\\F104"
+        }
+      },
+      "mindful-stage-unpushed": {
+        "description": "Mindful Stage unpushed icon",
+        "default": {
+          "fontPath": "assets/mindful-stage.woff",
+          "fontCharacter": "\\F102"
+        }
+      }
+    }
   },
   "devDependencies": {
     "@parcel/watcher": "^2.6.0",
@@ -83,15 +120,18 @@
     "@types/vscode": "^1.137.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
+    "fantasticon": "^4.1.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },
   "dependencies": {
+    "@rushstack/lookup-by-path": "^0.10.15",
     "fast-glob": "^3.3.3",
     "gitignore-fs": "^2.2.3",
     "parse-diff": "^0.12.0",
     "reflect-metadata": "^0.2.2",
     "simple-git": "^3.36.0",
+    "sorted-btree": "^2.1.0",
     "tsyringe": "^4.10.0"
   }
 }

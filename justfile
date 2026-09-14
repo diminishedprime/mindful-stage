@@ -7,6 +7,11 @@ default:
 build:
     pnpm build
 
+# Regenerate the icon font from the SVGs in assets/icons.
+icons:
+    pnpm exec fantasticon
+    node scripts/sync-icons.mjs
+
 # Typecheck without emitting.
 check:
     pnpm typecheck

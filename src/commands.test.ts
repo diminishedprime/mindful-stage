@@ -1,20 +1,34 @@
 import "reflect-metadata";
 import { container } from "tsyringe";
 import { describe, expect, test as base } from "vitest";
+import { Commands } from "./commands";
 import {
-  Commands,
   EDITOR,
   GIT,
   GIT_REFRESHER,
+  NAVIGATION,
   NOTIFIER,
   PICKER,
-  READMES,
   REPO_FINDER,
-  ROOTS,
+  REPO_LISTENER,
+  REPO_PICKER,
+  REPOS,
+  WORKSPACE_FOLDERS,
+  STAGING,
   STATUS_BAR,
+  TALLY,
   WATCHER,
-} from "./commands";
+  WORKSPACE,
+  WORKSPACE_FILE_WATCHER,
+} from "./di-tokens";
+import { Navigation } from "./navigation";
 import { GlobRepoFinder } from "./repo-finder";
+import { RepoPicker } from "./repo-picker";
+import { Repos } from "./repos";
+import { Staging } from "./staging";
+import { Tally } from "./tally";
+import { Workspace } from "./workspace";
+import { WorkspaceFileWatcher } from "./workspace-file-watcher";
 import { SimpleGitClient } from "./git";
 import type {
   Editor,
@@ -44,7 +58,7 @@ const last = Polyrepo.MINDFUL_STAGE_README;
 const test = base.extend<{
   polyrepo: Polyrepo;
   addedFolder: Polyrepo;
-  roots: string[];
+  workspaceFolders: string[];
   editor: FakeEditor;
   notifier: FakeNotifier;
   git: GatedGit;
@@ -52,6 +66,7 @@ const test = base.extend<{
   finder: GatedRepoFinder;
   picker: FakePicker;
   statusBar: FakeStatusBar;
+  tally: { current: Tally | undefined };
   watcher: SettlingWatcher;
   sut: Commands;
   t: {
@@ -63,6 +78,7 @@ const test = base.extend<{
     finder: GatedRepoFinder;
     picker: FakePicker;
     statusBar: FakeStatusBar;
+    tally: { current: Tally | undefined };
     watcher: SettlingWatcher;
     sut: Commands;
   };
@@ -78,7 +94,7 @@ const test = base.extend<{
     await use(addedFolder);
     addedFolder.dispose();
   },
-  roots: async ({ polyrepo }, use) => {
+  workspaceFolders: async ({ polyrepo }, use) => {
     await use([polyrepo.root]);
   },
   editor: async ({}, use) => {
@@ -105,9 +121,12 @@ const test = base.extend<{
   statusBar: async ({}, use) => {
     await use(new FakeStatusBar());
   },
+  tally: async ({}, use) => {
+    await use({ current: undefined as Tally | undefined });
+  },
   sut: async (
     {
-      roots,
+      workspaceFolders,
       editor,
       notifier,
       git,
@@ -115,11 +134,12 @@ const test = base.extend<{
       finder,
       picker,
       statusBar,
+      tally,
       watcher,
     },
     use,
   ) => {
-    const sut = container
+    const child = container
       .createChildContainer()
       .register<Editor>(EDITOR, { useValue: editor })
       .register<Notifier>(NOTIFIER, { useValue: notifier })
@@ -128,9 +148,18 @@ const test = base.extend<{
       .register<Picker>(PICKER, { useValue: picker })
       .register<RepoFinder>(REPO_FINDER, { useValue: finder })
       .register<StatusBar>(STATUS_BAR, { useValue: statusBar })
-      .register<string[]>(ROOTS, { useValue: roots })
+      .register<string[]>(WORKSPACE_FOLDERS, { useValue: workspaceFolders })
       .register<Watcher>(WATCHER, { useValue: watcher })
-      .resolve(Commands);
+      .registerSingleton(WORKSPACE_FILE_WATCHER, WorkspaceFileWatcher)
+      .registerSingleton(REPOS, Repos)
+      .registerSingleton(WORKSPACE, Workspace)
+      .registerSingleton(NAVIGATION, Navigation)
+      .registerSingleton(TALLY, Tally)
+      .registerSingleton(REPO_PICKER, RepoPicker)
+      .registerSingleton(STAGING, Staging)
+      .register(REPO_LISTENER, { useToken: TALLY });
+    const sut = child.resolve(Commands);
+    tally.current = child.resolve<Tally>(TALLY);
     await sut.ready();
     await use(sut);
     await sut.dispose();
@@ -145,6 +174,7 @@ const test = base.extend<{
       finder,
       picker,
       statusBar,
+      tally,
       watcher,
       sut,
     },
@@ -160,6 +190,7 @@ const test = base.extend<{
       finder,
       picker,
       statusBar,
+      tally,
       watcher,
       sut,
     });
@@ -443,19 +474,35 @@ describe.concurrent("Commands", () => {
     });
   });
 
-  describe.each(READMES)("a repo whose readme is named %s", (readme) => {
-    test("stands in for a file that can't be opened", async ({ t }) => {
-      await t.polyrepo.cloneRepo(Polyrepo.CERT_MANAGER, {
-        ".gitignore": "*.log\n",
-        [readme]: "cert-manager\n",
-        "kustomization.yaml": "resources:\n  - cert-manager.yaml\n",
-      });
-      await t.polyrepo.deleteTrackedFile(Polyrepo.CERT_MANAGER_KUSTOMIZATION);
+  describe.each(Navigation.COMMON_README_FILENAMES)(
+    "a repo whose readme is named %s",
+    (readme) => {
+      test("stands in for a file that can't be opened", async ({ t }) => {
+        await t.polyrepo.cloneRepo(Polyrepo.CERT_MANAGER, {
+          ".gitignore": "*.log\n",
+          [readme]: "cert-manager\n",
+          "kustomization.yaml": "resources:\n  - cert-manager.yaml\n",
+        });
+        await t.polyrepo.deleteTrackedFile(Polyrepo.CERT_MANAGER_KUSTOMIZATION);
 
-      await t.sut.nextUnstaged();
+        await t.sut.nextUnstaged();
+
+        expect(t.editor.opened.map((p) => p.path)).toEqual([
+          t.polyrepo.pathTo(`${Polyrepo.CERT_MANAGER}/${readme}`),
+        ]);
+      });
+    },
+  );
+
+  describe("pressing a navigation twice before it lands", () => {
+    test("only the last press opens an editor", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.modifyTrackedFile(last);
+
+      await Promise.all([t.sut.nextUnstaged(), t.sut.nextUnstaged()]);
 
       expect(t.editor.opened.map((p) => p.path)).toEqual([
-        t.polyrepo.pathTo(`${Polyrepo.CERT_MANAGER}/${readme}`),
+        t.polyrepo.pathTo(first),
       ]);
     });
   });
@@ -514,25 +561,51 @@ describe.concurrent("Commands", () => {
       expect(t.editor.opened).toEqual([]);
     });
 
-    test("with nothing outstanding says so in the pick itself", async ({
-      t,
-    }) => {
+    test("with nothing outstanding never shows a picker", async ({ t }) => {
       await t.sut.pickRepo();
 
-      expect(t.picker.choices.map((c) => c.label)).toEqual([
-        "No outstanding changes.",
-      ]);
+      expect(t.picker.offered).toEqual([]);
+      expect(t.editor.opened).toEqual([]);
       expect(t.notifier.notices).toEqual([]);
     });
+  });
 
-    test("choosing the nothing-outstanding entry opens nothing", async ({
+  describe("with a file outside every repo in the editor", () => {
+    test("staging a hunk says so and stages nothing", async ({ t }) => {
+      await t.editor.open(t.polyrepo.pathTo("notes.txt"));
+
+      await t.sut.stageHunkAtCursor();
+
+      expect(t.notifier.notices).toEqual(["not inside a repo"]);
+      expect(t.gitRefresher.refreshed).toEqual([]);
+    });
+
+    test("starting to track says so and touches nothing", async ({ t }) => {
+      await t.editor.open(t.polyrepo.pathTo("notes.txt"));
+
+      await t.sut.startTracking();
+
+      expect(t.notifier.notices).toEqual(["not inside a repo"]);
+      expect(t.gitRefresher.refreshed).toEqual([]);
+    });
+  });
+
+  describe("a file that left disk since the last refresh", () => {
+    test("stands in with the readme instead of failing to open", async ({
       t,
     }) => {
-      t.picker.picksFirst();
+      await t.polyrepo.modifyTrackedFile(first);
+      t.git.holdAll();
+      t.polyrepo.deleteTrackedFileWithoutSettling(first);
 
-      await t.sut.pickRepo();
+      await t.sut.nextUnstaged();
 
-      expect(t.editor.opened).toEqual([]);
+      expect(t.editor.opened.map((p) => p.path)).toEqual([
+        t.polyrepo.pathTo(`${Polyrepo.ARGO}/.gitignore`),
+      ]);
+      expect(t.notifier.errors).toEqual([
+        "argo.yaml was deleted, opening first tracked file so you can stage the deletion manually.",
+      ]);
     });
   });
 
@@ -932,32 +1005,34 @@ describe.concurrent("Commands", () => {
     test("with nothing changed anywhere says there are no changes", async ({
       t,
     }) => {
-      expect(t.statusBar.summary).toBe("No changes");
+      expect(t.statusBar.summary).toBe("$(mindful-stage-clean) No changes");
     });
 
     test("with everything staged says it is ready to commit", async ({ t }) => {
       await t.polyrepo.stageTrackedChange(first);
 
-      expect(t.statusBar.summary).toBe("ready to commit");
+      expect(t.statusBar.summary).toBe(
+        "$(mindful-stage-ready) ready to commit",
+      );
     });
 
     test("counts repos holding unpushed commits", async ({ t }) => {
       await t.polyrepo.commitWithoutPushing(Polyrepo.ARGO, "argo.yaml");
 
-      expect(t.statusBar.summary).toBe("1 unpushed");
+      expect(t.statusBar.summary).toBe("$(mindful-stage-unpushed)1");
     });
 
     test("counts repos with no upstream at all", async ({ t }) => {
       await t.polyrepo.removeUpstream(Polyrepo.ARGO);
 
-      expect(t.statusBar.summary).toBe("1 unlinked");
+      expect(t.statusBar.summary).toBe("$(mindful-stage-missing-upstream)1");
     });
 
     test("shows unpushed alongside unstaged work", async ({ t }) => {
       await t.polyrepo.commitWithoutPushing(Polyrepo.ARGO, "argo.yaml");
       await t.polyrepo.modifyTrackedFile(last);
 
-      expect(t.statusBar.summary).toBe("1M 1 unpushed");
+      expect(t.statusBar.summary).toBe("1M $(mindful-stage-unpushed)1");
     });
 
     test("counts unstaged work by its git status letter", async ({ t }) => {
@@ -980,7 +1055,18 @@ describe.concurrent("Commands", () => {
 
       await t.polyrepo.stageFile(first);
 
-      expect(t.statusBar.summary).toBe("ready to commit");
+      expect(t.statusBar.summary).toBe(
+        "$(mindful-stage-ready) ready to commit",
+      );
+    });
+
+    test("a repo that disappears stops counting", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      expect(t.statusBar.summary).toBe("1M");
+
+      await t.polyrepo.removeRepo(Polyrepo.ARGO);
+
+      expect(t.statusBar.summary).toBe("$(mindful-stage-clean) No changes");
     });
 
     test("breaks the work down per repo on hover", async ({ t }) => {
@@ -1007,7 +1093,7 @@ describe.concurrent("Commands", () => {
       await t.polyrepo.deleteTrackedFile(last);
       const running = t.statusBar.summary;
 
-      t.sut.reconcile();
+      t.tally.current!.reconcile();
 
       expect(t.statusBar.summary).toBe(running);
     });
@@ -1015,7 +1101,7 @@ describe.concurrent("Commands", () => {
 
   describe("with a second folder added to the workspace", () => {
     test.override({
-      roots: async ({ polyrepo, addedFolder }, use) => {
+      workspaceFolders: async ({ polyrepo, addedFolder }, use) => {
         await use([polyrepo.root, addedFolder.root]);
       },
     });
