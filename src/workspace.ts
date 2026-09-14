@@ -48,8 +48,12 @@ export class Workspace {
     direction: Direction,
     mode: Mode,
   ): Promise<ResolvedDestination | undefined> {
-    const here = await this.repos.repoContaining(cursor.path).hunksIn(cursor.path, mode);
-    const line = here.beyond(cursor.line, direction)?.start;
+    const home = this.repos.findRepoContaining(cursor.path);
+    const line =
+      home === undefined
+        ? undefined
+        : (await home.hunksIn(cursor.path, mode)).beyond(cursor.line, direction)
+            ?.start;
     if (line !== undefined) {
       return { kind: DestinationKind.Hunk, file: cursor.path, line };
     }

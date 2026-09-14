@@ -21,6 +21,7 @@ import {
   WORKSPACE_FILE_WATCHER,
 } from "./di-tokens";
 import { SimpleGitClient } from "./git";
+import { log, logTo } from "./log";
 import { Navigation } from "./navigation";
 import { GlobRepoFinder } from "./repo-finder";
 import { RepoPicker } from "./repo-picker";
@@ -89,14 +90,42 @@ export class Extension {
       .register(REPO_LISTENER, { useToken: TALLY });
 
     const commands = container.resolve(Commands);
+    const editor = container.resolve<Editor>(EDITOR);
+
+    if (
+      vscode.workspace.getConfiguration("mindfulStage").get<boolean>("log") ===
+      true
+    ) {
+      log(`logging to ${logTo(context.globalStorageUri.fsPath)}`);
+    }
 
     context.subscriptions.push(
       { dispose: () => commands.dispose() },
       ...Extension.COMMANDS.map((command) =>
         vscode.commands.registerCommand(`mindfulStage.${command}`, () =>
-          commands[command](),
+          Extension.instrumented(command, editor, () => commands[command]()),
         ),
       ),
     );
+  }
+
+  private static async instrumented(
+    command: string,
+    editor: Editor,
+    run: () => Promise<void>,
+  ): Promise<void> {
+    const cursor = editor.active();
+    log(
+      `${command} from ${cursor === undefined ? "no active editor" : `${cursor.path}:${cursor.line}`}`,
+    );
+    try {
+      await run();
+      log(`${command} landed on ${editor.active()?.path ?? "nothing"}`);
+    } catch (error) {
+      log(
+        `${command} threw ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
+      throw error;
+    }
   }
 }

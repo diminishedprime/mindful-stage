@@ -18,6 +18,16 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Mindful Stage",
+      "properties": {
+        "mindfulStage.log": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write a diagnostic log of every navigation command to mindful-stage.log in the extension's global storage directory."
+        }
+      }
+    },
     "commands": [
       {
         "command": "mindfulStage.nextUnstaged",

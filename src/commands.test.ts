@@ -384,6 +384,23 @@ describe.concurrent("Commands", () => {
     });
   });
 
+  describe("navigating from a file that is not a stop", () => {
+    test("moves to the first unstaged hunk from a file in no repo", async ({
+      t,
+    }) => {
+      const scratch = t.polyrepo.pathTo(".claude/scratch/issue-181.md");
+      await t.polyrepo.modifyTrackedLine(first, 2);
+      await t.editor.open(scratch, 8);
+
+      await t.sut.nextUnstagedHunk();
+
+      expect(t.editor.opened).toEqual([
+        { path: scratch, line: 8 },
+        { path: t.polyrepo.pathTo(first), line: 2 },
+      ]);
+    });
+  });
+
   describe.each([
     {
       mode: "unstaged",
