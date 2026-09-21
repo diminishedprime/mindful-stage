@@ -1,5 +1,5 @@
 import type { StatusResult } from "simple-git";
-import type { Diff, Git, Hunk, Mode } from "../../src/types";
+import type { Diff, Git, Hunk, GitTrackedMode } from "../../src/types";
 
 // Lets a test check that a command only interacts with the repos it should
 //
@@ -39,12 +39,12 @@ export class GatedGit implements Git {
     return this.statuses.get(repo) ?? 0;
   }
 
-  async status(repo: string): Promise<StatusResult> {
+  async statusFor(repo: string): Promise<StatusResult> {
     this.statuses.set(repo, this.statusCalls(repo) + 1);
     if (this.failing.delete(repo)) {
       throw new Error(`simulated git failure in ${repo}`);
     }
-    const result = await this.real.status(repo);
+    const result = await this.real.statusFor(repo);
     if (this.held.has(repo)) {
       const { signal } = this.aborter;
       await new Promise<never>((_, reject) =>
@@ -54,20 +54,20 @@ export class GatedGit implements Git {
     return result;
   }
 
-  lfsPaths(repo: string, paths: string[]): Promise<Set<string>> {
-    return this.real.lfsPaths(repo, paths);
+  lfsPathsFor(repo: string, paths: string[]): Promise<Set<string>> {
+    return this.real.lfsPathsFor(repo, paths);
   }
 
-  hunks(repo: string, file: string, mode: Mode): Promise<Diff> {
-    return this.real.hunks(repo, file, mode);
+  hunksFor(repo: string, file: string, mode: GitTrackedMode): Promise<Diff> {
+    return this.real.hunksFor(repo, file, mode);
   }
 
   stage(repo: string, hunk: Hunk): Promise<void> {
     return this.real.stage(repo, hunk);
   }
 
-  trackedFiles(repo: string): Promise<string[]> {
-    return this.real.trackedFiles(repo);
+  trackedFilesFor(repo: string): Promise<string[]> {
+    return this.real.trackedFilesFor(repo);
   }
 
   hashObject(repo: string, content: string): Promise<string> {

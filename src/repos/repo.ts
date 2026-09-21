@@ -6,9 +6,8 @@ import {
   type Changes,
   type Diff,
   type Git,
-  type GitRefresher,
   type Hunk,
-  Mode,
+  GitTrackedMode,
   StatusCode,
 } from "../types";
 import { type Completed, Refresher } from "../util/refresher";
@@ -21,14 +20,13 @@ export class Repo {
   constructor(
     readonly path: string,
     private readonly git: Git,
-    private readonly refresher: GitRefresher,
     completed: Completed<Changes>,
   ) {
     this.status = new Refresher(() => this.statusOf(), completed);
     this.hunks = new Hunks(path, git);
   }
 
-  hunksIn(file: string, mode: Mode): Promise<Diff> {
+  hunksIn(file: string, mode: GitTrackedMode): Promise<Diff> {
     return this.hunks.forFile(file).thatAre(mode);
   }
 
@@ -39,7 +37,6 @@ export class Repo {
   async stage(hunk: Hunk): Promise<void> {
     await this.git.stage(this.path, hunk);
     this.hunks.invalidateFile(path.join(this.path, hunk.to));
-    this.refresher.refresh(this.path);
   }
 
   async startTracking(file: string): Promise<boolean> {
@@ -53,7 +50,6 @@ export class Repo {
     const hash = await this.git.hashObject(this.path, firstLine);
     await this.git.addToIndex(this.path, path.relative(this.path, file), hash);
     this.hunks.invalidateFile(file);
-    this.refresher.refresh(this.path);
     return true;
   }
 
@@ -68,7 +64,7 @@ export class Repo {
   }
 
   private async statusOf(): Promise<Changes> {
-    const { files, not_added, ahead, tracking } = await this.git.status(
+    const { files, not_added, ahead, tracking } = await this.git.statusFor(
       this.path,
     );
     const ordered = Repo.ordered(files, not_added.length);
@@ -96,7 +92,7 @@ export class Repo {
       }
     }
     if (relativeUnstaged.length > 0) {
-      const lfs = await this.git.lfsPaths(this.path, relativeUnstaged);
+      const lfs = await this.git.lfsPathsFor(this.path, relativeUnstaged);
       if (lfs.size > 0) {
         const excluded = new Set(
           [...lfs].map((file) => path.join(this.path, file)),
@@ -110,8 +106,8 @@ export class Repo {
       }
     }
     return {
-      [Mode.Unstaged]: Ring.of(unstaged),
-      [Mode.Staged]: Ring.of(staged),
+      [GitTrackedMode.Unstaged]: Ring.of(unstaged),
+      [GitTrackedMode.Staged]: Ring.of(staged),
       untracked,
       deleted,
       remaining,

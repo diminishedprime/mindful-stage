@@ -4,9 +4,7 @@ import { inject, injectable } from "tsyringe";
 import { LookupByPath } from "@rushstack/lookup-by-path";
 import {
   GIT,
-  GIT_REFRESHER,
   REPO_FINDER,
-  REPO_LISTENER,
   WORKSPACE_FILE_WATCHER,
   WORKSPACE_FOLDERS,
 } from "../di-tokens";
@@ -15,7 +13,6 @@ import {
   type Changes,
   type Disposable,
   type Git,
-  type GitRefresher,
   type RepoFinder,
   type RepoListener,
 } from "../types";
@@ -25,6 +22,7 @@ import { Repo } from "./repo";
 @injectable()
 export class Repos {
   private readonly repoByPath = new LookupByPath<Repo>(undefined, path.sep);
+  private readonly listeners: RepoListener[] = [];
   private ordered: Ring<string> | undefined;
   private readonly fileChangeSubscriptions: Promise<Disposable[]>;
   private readonly initialScan: Promise<unknown>;
@@ -32,9 +30,7 @@ export class Repos {
 
   constructor(
     @inject(GIT) private readonly git: Git,
-    @inject(GIT_REFRESHER) private readonly gitRefresher: GitRefresher,
     @inject(REPO_FINDER) private readonly repoFinder: RepoFinder,
-    @inject(REPO_LISTENER) private readonly listener: RepoListener,
     @inject(WORKSPACE_FOLDERS) workspaceFolders: string[],
     @inject(WORKSPACE_FILE_WATCHER) watcher: WorkspaceFileWatcher,
   ) {
@@ -60,6 +56,16 @@ export class Repos {
         }),
       ),
     );
+  }
+
+  subscribe(listener: RepoListener): void {
+    this.listeners.push(listener);
+    for (const repo of this.all()) {
+      const changes = repo.status.current;
+      if (changes !== undefined) {
+        listener.refreshed(repo.path, changes);
+      }
+    }
   }
 
   async discovered(): Promise<void> {
@@ -129,9 +135,11 @@ export class Repos {
     }
     this.repoByPath.setItem(
       repoPath,
-      new Repo(repoPath, this.git, this.gitRefresher, (changes) =>
-        this.listener.refreshed(repoPath, changes),
-      ),
+      new Repo(repoPath, this.git, (changes) => {
+        for (const listener of this.listeners) {
+          listener.refreshed(repoPath, changes);
+        }
+      }),
     );
     this.ordered = undefined;
   }
@@ -141,7 +149,9 @@ export class Repos {
       return;
     }
     this.ordered = undefined;
-    this.listener.removed(repoPath);
+    for (const listener of this.listeners) {
+      listener.removed(repoPath);
+    }
   }
 
   private async repoAppearedOrVanished(gitDir: string): Promise<void> {

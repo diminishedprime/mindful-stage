@@ -10,7 +10,7 @@
   },
   "main": "./dist/main.js",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/main.js",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --main-fields=module,main --external:vscode --outfile=dist/main.js",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "pnpm build"
   },
@@ -21,13 +21,70 @@
     "configuration": {
       "title": "Mindful Stage",
       "properties": {
+        "mindfulStage.decorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mark git status in the gutter."
+        },
         "mindfulStage.log": {
           "type": "boolean",
           "default": false,
-          "description": "Write a diagnostic log of every navigation command to mindful-stage.log in the extension's global storage directory."
+          "description": "Write logs to log_location"
         }
       }
     },
+    "colors": [
+      {
+        "id": "mindfulStage.unstagedChange",
+        "description": "Gutter mark for a line with unstaged changes. Unset, it follows the active theme's markup.changed token colour.",
+        "defaults": {
+          "dark": "#CB4B16",
+          "light": "#CB4B16",
+          "highContrast": "#CB4B16",
+          "highContrastLight": "#CB4B16"
+        }
+      },
+      {
+        "id": "mindfulStage.stagedChange",
+        "description": "Gutter mark for a line with staged changes. Unset, it follows the active theme's storage token colour.",
+        "defaults": {
+          "dark": "#9872A2",
+          "light": "#9872A2",
+          "highContrast": "#9872A2",
+          "highContrastLight": "#9872A2"
+        }
+      },
+      {
+        "id": "mindfulStage.unstagedDeletion",
+        "description": "Gutter mark for a boundary where unstaged lines were deleted. Unset, it follows the active theme's markup.deleted token colour.",
+        "defaults": {
+          "dark": "#DC322F",
+          "light": "#DC322F",
+          "highContrast": "#DC322F",
+          "highContrastLight": "#DC322F"
+        }
+      },
+      {
+        "id": "mindfulStage.stagedDeletion",
+        "description": "Gutter mark for a boundary where staged lines were deleted. Unset, it follows the active theme's storage token colour, matching staged changes.",
+        "defaults": {
+          "dark": "#9872A2",
+          "light": "#9872A2",
+          "highContrast": "#9872A2",
+          "highContrastLight": "#9872A2"
+        }
+      },
+      {
+        "id": "mindfulStage.untracked",
+        "description": "Gutter mark for every line of an untracked file. Unset, it follows the active theme's markup.inserted token colour.",
+        "defaults": {
+          "dark": "#219186",
+          "light": "#219186",
+          "highContrast": "#219186",
+          "highContrastLight": "#219186"
+        }
+      }
+    ],
     "commands": [
       {
         "command": "mindfulStage.nextUnstaged",
@@ -138,10 +195,12 @@
     "@rushstack/lookup-by-path": "^0.10.15",
     "fast-glob": "^3.3.3",
     "gitignore-fs": "^2.2.3",
+    "jsonc-parser": "^3.3.1",
     "parse-diff": "^0.12.0",
     "reflect-metadata": "^0.2.2",
     "simple-git": "^3.36.0",
     "sorted-btree": "^2.1.0",
-    "tsyringe": "^4.10.0"
+    "tsyringe": "^4.10.0",
+    "zod": "^4.6.5"
   }
 }

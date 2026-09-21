@@ -33,6 +33,35 @@ With everything staged, reads `ready to commit` With no outstanding work, reads
 Hovering on the status bar shows the breakdown per repo. And clicking on it
 opens a list to choose a repo to go directly to.
 
+## Gutter marks and explorer badges
+
+This extension provides gutter marks & file badges/colorization that can be
+customized to your preferences.
+
+Turn the gutter marks off with `mindfulStage.decorations`.
+
+Colours follow the active theme's colours, and each one can be overridden:
+
+```jsonc
+"workbench.colorCustomizations": {
+  "mindfulStage.unstagedChange": "#e5c07b",
+  "mindfulStage.stagedChange": "#c678dd",
+  "mindfulStage.unstagedDeletion": "#e06c75",
+  "mindfulStage.stagedDeletion": "#c678dd",
+  "mindfulStage.untracked": "#98c379"
+}
+```
+
+This extension has some overlap with the built-in git one, you can set the
+following to disable the parts this extension provides:
+
+```jsonc
+"scm.diffDecorations": "none",        // built-in gutter marks
+"git.decorations.enabled": false,     // built-in explorer badges
+"git.countBadge": "off",              // count on the Source Control icon
+"git.enableStatusBarSync": false      // Sync item in the status bar
+```
+
 ## Commands
 
 All commands are prefixed `Mindful Stage:` in the command palette.

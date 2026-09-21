@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import type * as vscode from "vscode";
-import { Extension } from "./extension";
+import { start } from "./graph";
 
 export function activate(context: vscode.ExtensionContext): void {
-  new Extension(context);
+  start(context);
 }
 
 export function deactivate(): void {}

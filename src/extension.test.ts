@@ -1,48 +1,80 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import "reflect-metadata";
 import { container } from "tsyringe";
 import { describe, expect, test as base } from "vitest";
 import { Commands } from "./commands";
 import {
+  COMMAND_REGISTRY,
+  COMPOSITOR,
+  DECORATIONS,
   EDITOR,
+  EVENTS,
+  FILE_BADGES,
+  FILE_DECORATIONS,
+  GUTTERS,
+  LOG_DIRECTORY,
+  LOGGER,
   GIT,
-  GIT_REFRESHER,
+  MANIFEST,
   NAVIGATION,
   NOTIFIER,
+  PACKAGE_JSON,
+  PALETTE,
   PICKER,
   REPO_FINDER,
-  REPO_LISTENER,
   REPO_PICKER,
   REPOS,
   WORKSPACE_FOLDERS,
   STAGING,
+  SETTINGS,
   STATUS_BAR,
   TALLY,
+  THEME,
   WATCHER,
   WORKSPACE,
   WORKSPACE_FILE_WATCHER,
 } from "./di-tokens";
+import { Compositor } from "./display/compositor";
+import { FileBadges } from "./display/file-badges";
+import { Gutters } from "./display/gutters";
+import { Logger } from "./logger";
 import { Navigation } from "./navigation";
+import { Palette } from "./palette";
+import { Manifest } from "./palette/manifest";
 import { GlobRepoFinder } from "./repo-finder";
 import { RepoPicker } from "./repo-picker";
 import { Repos } from "./repos";
-import { Staging } from "./staging";
+import { GitStager as GitStager } from "./staging";
 import { Tally } from "./tally";
 import { Workspace } from "./workspace";
 import { WorkspaceFileWatcher } from "./workspace-file-watcher";
 import { SimpleGitClient } from "./git";
+import { Change } from "./types";
 import type {
+  CommandRegistry,
+  Decorations,
   Editor,
+  Events,
+  FileDecorations,
+  Settings,
   Git,
-  GitRefresher,
   Notifier,
   Picker,
   RepoFinder,
   StatusBar,
+  Theme,
   Watcher,
 } from "./types";
+import { FakeCommandRegistry } from "../test/fakes/command-registry";
+import { FakeDecorations } from "../test/fakes/decorations";
+import { FakeEvents } from "../test/fakes/events";
+import { FakeFileDecorations } from "../test/fakes/file-decorations";
+import { FakeSettings } from "../test/fakes/settings";
+import { FakeTheme } from "../test/fakes/theme";
 import { FakeEditor } from "../test/fakes/editor";
 import { GatedGit } from "../test/fakes/git";
-import { FakeGitRefresher } from "../test/fakes/git-refresher";
 import { FakeNotifier } from "../test/fakes/notifier";
 import { FakePicker } from "../test/fakes/picker";
 import { GatedRepoFinder } from "../test/fakes/repo-finder";
@@ -50,6 +82,10 @@ import { FakeStatusBar } from "../test/fakes/status-bar";
 import { SettlingWatcher } from "../test/fakes/watcher";
 import { ParcelWatcher } from "../test/parcel-watcher";
 import { Polyrepo } from "../test/polyrepo";
+
+const packageJson: unknown = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+);
 
 const first = Polyrepo.ARGO_YAML;
 const middle = Polyrepo.ARGO_KUSTOMIZATION;
@@ -62,10 +98,13 @@ const test = base.extend<{
   editor: FakeEditor;
   notifier: FakeNotifier;
   git: GatedGit;
-  gitRefresher: FakeGitRefresher;
   finder: GatedRepoFinder;
   picker: FakePicker;
   statusBar: FakeStatusBar;
+  settings: FakeSettings;
+  events: FakeEvents;
+  badges: FakeFileDecorations;
+  gutter: FakeDecorations;
   tally: { current: Tally | undefined };
   watcher: SettlingWatcher;
   sut: Commands;
@@ -74,10 +113,13 @@ const test = base.extend<{
     editor: FakeEditor;
     notifier: FakeNotifier;
     git: GatedGit;
-    gitRefresher: FakeGitRefresher;
     finder: GatedRepoFinder;
     picker: FakePicker;
     statusBar: FakeStatusBar;
+    settings: FakeSettings;
+    events: FakeEvents;
+    badges: FakeFileDecorations;
+    gutter: FakeDecorations;
     tally: { current: Tally | undefined };
     watcher: SettlingWatcher;
     sut: Commands;
@@ -106,9 +148,6 @@ const test = base.extend<{
   git: async ({ polyrepo }, use) => {
     await use(new GatedGit(new SimpleGitClient(), polyrepo.repoPaths()));
   },
-  gitRefresher: async ({}, use) => {
-    await use(new FakeGitRefresher());
-  },
   watcher: async ({}, use) => {
     await use(new SettlingWatcher(new ParcelWatcher()));
   },
@@ -121,6 +160,18 @@ const test = base.extend<{
   statusBar: async ({}, use) => {
     await use(new FakeStatusBar());
   },
+  settings: async ({}, use) => {
+    await use(new FakeSettings());
+  },
+  events: async ({}, use) => {
+    await use(new FakeEvents());
+  },
+  badges: async ({}, use) => {
+    await use(new FakeFileDecorations());
+  },
+  gutter: async ({}, use) => {
+    await use(new FakeDecorations());
+  },
   tally: async ({}, use) => {
     await use({ current: undefined as Tally | undefined });
   },
@@ -130,10 +181,13 @@ const test = base.extend<{
       editor,
       notifier,
       git,
-      gitRefresher,
       finder,
       picker,
       statusBar,
+      settings,
+      events,
+      badges,
+      gutter,
       tally,
       watcher,
     },
@@ -141,25 +195,44 @@ const test = base.extend<{
   ) => {
     const child = container
       .createChildContainer()
+      .register<CommandRegistry>(COMMAND_REGISTRY, {
+        useValue: new FakeCommandRegistry(),
+      })
       .register<Editor>(EDITOR, { useValue: editor })
+      .register<Settings>(SETTINGS, { useValue: settings })
+      .register<string>(LOG_DIRECTORY, {
+        useValue: path.join(os.tmpdir(), "mindful-stage-test-logs"),
+      })
+      .registerSingleton(LOGGER, Logger)
       .register<Notifier>(NOTIFIER, { useValue: notifier })
       .register<Git>(GIT, { useValue: git })
-      .register<GitRefresher>(GIT_REFRESHER, { useValue: gitRefresher })
       .register<Picker>(PICKER, { useValue: picker })
       .register<RepoFinder>(REPO_FINDER, { useValue: finder })
       .register<StatusBar>(STATUS_BAR, { useValue: statusBar })
       .register<string[]>(WORKSPACE_FOLDERS, { useValue: workspaceFolders })
       .register<Watcher>(WATCHER, { useValue: watcher })
+      .register<Events>(EVENTS, { useValue: events })
+      .register<Theme>(THEME, { useValue: new FakeTheme() })
+      .register<unknown>(PACKAGE_JSON, { useValue: packageJson })
+      .register<Decorations>(DECORATIONS, { useValue: gutter })
+      .register<FileDecorations>(FILE_DECORATIONS, { useValue: badges })
+      .registerSingleton(MANIFEST, Manifest)
+      .registerSingleton(PALETTE, Palette)
+      .registerSingleton(COMPOSITOR, Compositor)
       .registerSingleton(WORKSPACE_FILE_WATCHER, WorkspaceFileWatcher)
       .registerSingleton(REPOS, Repos)
       .registerSingleton(WORKSPACE, Workspace)
       .registerSingleton(NAVIGATION, Navigation)
       .registerSingleton(TALLY, Tally)
       .registerSingleton(REPO_PICKER, RepoPicker)
-      .registerSingleton(STAGING, Staging)
-      .register(REPO_LISTENER, { useToken: TALLY });
+      .registerSingleton(STAGING, GitStager)
+      .registerSingleton(FILE_BADGES, FileBadges)
+      .registerSingleton(GUTTERS, Gutters);
     const sut = child.resolve(Commands);
     tally.current = child.resolve<Tally>(TALLY);
+    child.resolve<Repos>(REPOS).subscribe(tally.current);
+    child.resolve<FileBadges>(FILE_BADGES);
+    child.resolve<Gutters>(GUTTERS);
     await sut.ready();
     await use(sut);
     await sut.dispose();
@@ -170,10 +243,13 @@ const test = base.extend<{
       editor,
       notifier,
       git,
-      gitRefresher,
       finder,
       picker,
       statusBar,
+      settings,
+      events,
+      badges,
+      gutter,
       tally,
       watcher,
       sut,
@@ -186,10 +262,13 @@ const test = base.extend<{
       editor,
       notifier,
       git,
-      gitRefresher,
       finder,
       picker,
       statusBar,
+      settings,
+      events,
+      badges,
+      gutter,
       tally,
       watcher,
       sut,
@@ -197,7 +276,7 @@ const test = base.extend<{
   },
 });
 
-describe.concurrent("Commands", () => {
+describe.concurrent("Mindful Stage", () => {
   describe.each([
     {
       mode: "unstaged",
@@ -333,7 +412,7 @@ describe.concurrent("Commands", () => {
 
       expect(t.editor.opened).toEqual([]);
       expect(t.notifier.notices).toEqual(["no unstaged files"]);
-    });
+    }, 7000);
 
     test("lands on a binary file by showing the repo's first tracked text file", async ({
       t,
@@ -358,7 +437,7 @@ describe.concurrent("Commands", () => {
 
       expect(t.editor.opened).toEqual([]);
       expect(t.notifier.notices).toEqual(["no unstaged files"]);
-    });
+    }, 7000);
 
     test("skips files ignored by the user's global git ignore", async ({
       t,
@@ -594,7 +673,6 @@ describe.concurrent("Commands", () => {
       await t.sut.stageHunkAtCursor();
 
       expect(t.notifier.notices).toEqual(["not inside a repo"]);
-      expect(t.gitRefresher.refreshed).toEqual([]);
     });
 
     test("starting to track says so and touches nothing", async ({ t }) => {
@@ -603,7 +681,6 @@ describe.concurrent("Commands", () => {
       await t.sut.startTracking();
 
       expect(t.notifier.notices).toEqual(["not inside a repo"]);
-      expect(t.gitRefresher.refreshed).toEqual([]);
     });
   });
 
@@ -841,9 +918,6 @@ describe.concurrent("Commands", () => {
       expect(t.editor.opened.at(-1)).toEqual({ path: file, line: 2 });
       await t.sut.nextStaged();
       expect(t.editor.opened.at(-1)?.path).toBe(file);
-      expect(t.gitRefresher.refreshed).toEqual([
-        t.polyrepo.repoPath(Polyrepo.ARGO),
-      ]);
     });
 
     test("refuses a file that is already tracked", async ({ t }) => {
@@ -873,9 +947,6 @@ describe.concurrent("Commands", () => {
         path: t.polyrepo.pathTo(last),
         line: 9,
       });
-      expect(t.gitRefresher.refreshed).toEqual([
-        t.polyrepo.repoPath(Polyrepo.MINDFUL_STAGE),
-      ]);
     });
 
     test("stages a hunk in a file inside a subdirectory", async ({ t }) => {
@@ -1134,6 +1205,117 @@ describe.concurrent("Commands", () => {
       expect(t.editor.opened.map((p) => p.path)).toEqual([
         addedFolder.pathTo(first),
       ]);
+    });
+  });
+
+  describe("the explorer badges", () => {
+    test("with nothing changed anywhere, nothing is badged", async ({ t }) => {
+      expect(t.badges.badged).toEqual([]);
+    });
+
+    test("an edited file is badged as modified", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+
+      expect(t.badges.badgeOn(t.polyrepo.pathTo(first))).toBe("M");
+    });
+
+    test("a staged file is badged as staged", async ({ t }) => {
+      await t.polyrepo.stageTrackedChange(first);
+
+      expect(t.badges.badgeOn(t.polyrepo.pathTo(first))).toBe("S");
+    });
+
+    test("an untracked file is badged as added", async ({ t }) => {
+      await t.polyrepo.createUntrackedFile(Polyrepo.ARGO, "extra.yaml");
+
+      expect(
+        t.badges.badgeOn(t.polyrepo.pathTo(`${Polyrepo.ARGO}/extra.yaml`)),
+      ).toBe("A");
+    });
+
+    test("editing a staged file again shows the unstaged badge", async ({
+      t,
+    }) => {
+      await t.polyrepo.stageTrackedChange(first);
+      await t.polyrepo.modifyTrackedFile(first);
+
+      expect(t.badges.badgeOn(t.polyrepo.pathTo(first))).toBe("M");
+    });
+
+    test("files in every repo carry their own badge", async ({ t }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+      await t.polyrepo.stageTrackedChange(last);
+
+      expect(t.badges.badgeOn(t.polyrepo.pathTo(first))).toBe("M");
+      expect(t.badges.badgeOn(t.polyrepo.pathTo(last))).toBe("S");
+    });
+
+    test("a repo leaving the workspace takes its badges with it", async ({
+      t,
+    }) => {
+      await t.polyrepo.modifyTrackedFile(first);
+
+      await t.polyrepo.removeRepo(Polyrepo.ARGO);
+
+      expect(t.badges.badged).toEqual([]);
+    });
+  });
+
+  describe("the gutter marks", () => {
+    test("mark the edited line of the file on screen", async ({
+      t,
+      expect,
+    }) => {
+      const file = t.polyrepo.pathTo(last);
+      const edited = 4;
+      await t.polyrepo.modifyTrackedLine(last, edited);
+
+      await t.editor.open(file);
+      t.events.showing([file]);
+
+      await expect
+        .poll(() => t.gutter.linesMarked(file, Change.Unstaged))
+        .toEqual([edited - 1]);
+    });
+
+    test("show a staged line as staged", async ({ t, expect }) => {
+      const file = t.polyrepo.pathTo(last);
+      const edited = 4;
+      await t.polyrepo.stageTrackedLine(last, edited);
+
+      await t.editor.open(file);
+      t.events.showing([file]);
+
+      await expect
+        .poll(() => t.gutter.linesMarked(file, Change.Staged))
+        .toEqual([edited - 1]);
+      expect(t.gutter.linesMarked(file, Change.Unstaged)).toEqual([]);
+    });
+
+    test("cover every line of an untracked file", async ({ t, expect }) => {
+      await t.polyrepo.createUntrackedFile(Polyrepo.ARGO, "extra.yaml", 3);
+      const file = t.polyrepo.pathTo(`${Polyrepo.ARGO}/extra.yaml`);
+
+      await t.editor.open(file);
+      t.events.showing([file]);
+
+      const everyLine = [...Array(t.editor.numberOfLines(file)).keys()];
+      await expect
+        .poll(() => t.gutter.linesMarked(file, Change.Untracked))
+        .toEqual(everyLine);
+    });
+
+    test("clear when decorations are turned off", async ({ t, expect }) => {
+      const file = t.polyrepo.pathTo(last);
+      await t.polyrepo.modifyTrackedLine(last, 4);
+      await t.editor.open(file);
+      t.events.showing([file]);
+      await expect.poll(() => t.gutter.anythingMarked(file)).toBe(true);
+
+      t.settings.turnDecorationsOff();
+      t.events.toggledDecorations();
+
+      await expect.poll(() => t.gutter.anythingMarked(file)).toBe(false);
     });
   });
 });

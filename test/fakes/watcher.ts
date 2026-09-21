@@ -5,7 +5,10 @@ import type { Disposable, OnChange, Watcher } from "../../src/types";
 // seen them.
 export class SettlingWatcher implements Watcher {
   private readonly reacted = new Map<string, Promise<void>>();
-  private readonly waiting = new Map<string, Array<(reaction: Promise<void>) => void>>();
+  private readonly waiting = new Map<
+    string,
+    Array<(reaction: Promise<void>) => void>
+  >();
 
   constructor(private readonly real: Watcher) {}
 

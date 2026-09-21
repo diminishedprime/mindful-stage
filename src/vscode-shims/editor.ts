@@ -1,15 +1,38 @@
 import * as vscode from "vscode";
-import type { Editor, Position } from "../types";
+import { type Cursor, type Editor, NOWHERE } from "../types";
 
 export class VscodeEditor implements Editor {
-  active(): Position | undefined {
+  visibleFiles(): string[] {
+    return [
+      ...new Set(
+        vscode.window.visibleTextEditors.map(
+          (editor) => editor.document.uri.fsPath,
+        ),
+      ),
+    ];
+  }
+
+  editorsShowing(file: string): vscode.TextEditor[] {
+    return vscode.window.visibleTextEditors.filter(
+      (editor) => editor.document.uri.fsPath === file,
+    );
+  }
+
+  numberOfLines(file: string): number {
+    return this.editorsShowing(file)[0]?.document.lineCount ?? 0;
+  }
+
+  active(): Cursor {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      return undefined;
+    if (editor === undefined) {
+      return NOWHERE;
     }
     return {
-      path: editor.document.uri.fsPath,
-      line: editor.selection.active.line + 1,
+      kind: "somewhere",
+      at: {
+        path: editor.document.uri.fsPath,
+        line: editor.selection.active.line + 1,
+      },
     };
   }
 

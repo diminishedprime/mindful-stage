@@ -1,10 +1,15 @@
 import type parseDiff from "parse-diff";
 import type { StatusResult } from "simple-git";
+import { z } from "zod";
 import type { Repo } from "./repos/repo";
 import type { Ring } from "./ring";
 import type { Workspace } from "./workspace";
 
 export type Position = { path: string; line: number };
+
+export type Cursor = { kind: "nowhere" } | { kind: "somewhere"; at: Position };
+
+export const NOWHERE: Cursor = { kind: "nowhere" };
 
 export type AtCursor = { active: Position; repo: Repo };
 
@@ -51,11 +56,11 @@ export type Hunk = {
 };
 
 export interface Git extends Disposable {
-  status(repo: string): Promise<StatusResult>;
-  lfsPaths(repo: string, paths: string[]): Promise<Set<string>>;
-  hunks(repo: string, file: string, mode: Mode): Promise<Diff>;
+  statusFor(repo: string): Promise<StatusResult>;
+  lfsPathsFor(repo: string, paths: string[]): Promise<Set<string>>;
+  hunksFor(repo: string, file: string, mode: GitTrackedMode): Promise<Diff>;
   stage(repo: string, hunk: Hunk): Promise<void>;
-  trackedFiles(repo: string): Promise<string[]>;
+  trackedFilesFor(repo: string): Promise<string[]>;
   hashObject(repo: string, content: string): Promise<string>;
   addToIndex(repo: string, file: string, hash: string): Promise<void>;
 }
@@ -64,7 +69,7 @@ export interface RepoFinder extends Disposable {
   findReposUnderWorkspace(workspaceRoot: string): Promise<string[]>;
 }
 
-export enum Mode {
+export enum GitTrackedMode {
   Unstaged = "unstaged",
   Staged = "staged",
 }
@@ -80,7 +85,7 @@ export enum StatusCode {
   Untracked = "?",
 }
 
-export type Changes = Record<Mode, Ring<string>> & {
+export type Changes = Record<GitTrackedMode, Ring<string>> & {
   untracked: Set<string>;
   deleted: Set<string>;
   remaining: Partial<Record<StatusCode, number>>;
@@ -103,12 +108,144 @@ export interface Watcher {
 }
 
 export interface Editor {
-  active(): Position | undefined;
+  active(): Cursor;
   open(path: string, line?: number): Promise<void>;
+  visibleFiles(): string[];
+  numberOfLines(file: string): number;
 }
 
-export interface GitRefresher {
-  refresh(repo: string): void;
+export interface Events extends Disposable {
+  visibleFilesChanged(handler: (files: string[]) => void): void;
+  colorsChanged(handler: () => void): void;
+  decorationsToggled(handler: () => void): void;
+}
+
+export type Span = { start: number; count: number };
+
+export const UNTRACKED = "untracked";
+
+export type MarkKind = GitTrackedMode | typeof UNTRACKED;
+
+export type Marks = Record<MarkKind, Span[]>;
+
+export enum Change {
+  Nothing = "nothing",
+  Staged = "staged",
+  Unstaged = "unstaged",
+  Untracked = "untracked",
+}
+
+export enum Deletion {
+  Nothing = "nothing",
+  Staged = "staged",
+  Unstaged = "unstaged",
+}
+
+export type Mark = {
+  change: Change;
+  above: Deletion;
+  below: Deletion;
+};
+
+export type Composition = { mark: Mark; lines: number[] };
+
+export enum Variant {
+  Dark = "dark",
+  Light = "light",
+  HighContrast = "highContrast",
+  HighContrastLight = "highContrastLight",
+}
+
+export type Defaults = Record<Variant, string>;
+
+export const DefaultsSchema = z.object({
+  dark: z.string().min(1),
+  light: z.string().min(1),
+  highContrast: z.string().min(1),
+  highContrastLight: z.string().min(1),
+});
+
+export const ManifestSchema = z.object({
+  contributes: z.object({
+    colors: z
+      .array(z.object({ id: z.string().min(1), defaults: DefaultsSchema }))
+      .min(1),
+  }),
+});
+
+export const SCOPES = {
+  unstagedChange: "markup.changed",
+  stagedChange: "storage",
+  unstagedDeletion: "markup.deleted",
+  stagedDeletion: "storage",
+  untracked: "markup.inserted",
+} as const;
+
+export type PaletteKey = keyof typeof SCOPES;
+
+export const TokenColorSchema = z.looseObject({
+  scope: z.union([z.string(), z.array(z.string())]).optional(),
+  settings: z.looseObject({ foreground: z.string().optional() }).optional(),
+});
+
+export type TokenColor = z.infer<typeof TokenColorSchema>;
+
+export const ThemeFileSchema = z.looseObject({
+  include: z.string().optional(),
+  tokenColors: z.array(TokenColorSchema).optional(),
+});
+
+export const CustomizationsSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.record(z.string(), z.string())]),
+);
+
+export type Customizations = z.infer<typeof CustomizationsSchema>;
+
+export const NlsSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.looseObject({ message: z.string() })]),
+);
+
+export type NlsEntry = z.infer<typeof NlsSchema>[string];
+
+export type ThemeEntry = {
+  id?: string;
+  label?: string;
+  file: string;
+  nls: string;
+};
+
+export interface Theme {
+  variant(): Variant;
+  installed(): ThemeEntry[];
+}
+
+export type FileBadge =
+  { kind: "nothing" } | { kind: "badge"; badge: string; color: string };
+
+export const NO_BADGE: FileBadge = { kind: "nothing" };
+
+export type Badged = Exclude<Change, Change.Nothing>;
+
+export interface FileDecorations extends Disposable {
+  decorate(badges: Map<string, FileBadge>): void;
+}
+
+export interface Decorations extends Disposable {
+  render(file: string, compositions: Composition[]): void;
+  recolor(): Promise<void>;
+}
+
+export interface CommandRegistry extends Disposable {
+  register(name: string, run: () => Promise<void>): void;
+}
+
+export interface Settings {
+  decorationsEnabled(): boolean;
+  loggingEnabled(): boolean;
+  colorTheme(): string;
+  colorCustomizations(): Record<string, unknown>;
 }
 
 export interface StatusBar extends Disposable {

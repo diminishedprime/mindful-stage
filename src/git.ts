@@ -2,16 +2,16 @@ import { spawn } from "child_process";
 import { simpleGit, type SimpleGit, type StatusResult } from "simple-git";
 import parseDiff from "parse-diff";
 import { Ring } from "./ring";
-import { type Diff, type Git, type Hunk, Mode } from "./types";
+import { type Diff, type Git, type Hunk, GitTrackedMode } from "./types";
 
 export class SimpleGitClient implements Git {
   private readonly aborter = new AbortController();
 
-  status(repo: string): Promise<StatusResult> {
+  statusFor(repo: string): Promise<StatusResult> {
     return this.git(repo).status();
   }
 
-  async lfsPaths(repo: string, paths: string[]): Promise<Set<string>> {
+  async lfsPathsFor(repo: string, paths: string[]): Promise<Set<string>> {
     return new Set(
       (await this.git(repo).raw("check-attr", "filter", "--", ...paths))
         .split("\n")
@@ -20,10 +20,14 @@ export class SimpleGitClient implements Git {
     );
   }
 
-  async hunks(repo: string, file: string, mode: Mode): Promise<Diff> {
+  async hunksFor(
+    repo: string,
+    file: string,
+    mode: GitTrackedMode,
+  ): Promise<Diff> {
     const diff = await this.git(repo).diff([
       "-U0",
-      ...(mode === Mode.Staged ? ["--cached"] : []),
+      ...(mode === GitTrackedMode.Staged ? ["--cached"] : []),
       "--",
       file,
     ]);
@@ -47,7 +51,7 @@ export class SimpleGitClient implements Git {
     );
   }
 
-  async trackedFiles(repo: string): Promise<string[]> {
+  async trackedFilesFor(repo: string): Promise<string[]> {
     return (await this.git(repo).raw("ls-files", "-z"))
       .split("\0")
       .filter((file) => file !== "");
@@ -82,7 +86,11 @@ export class SimpleGitClient implements Git {
     ].join("\n");
   }
 
-  private withStdin(repo: string, args: string[], input: string): Promise<string> {
+  private withStdin(
+    repo: string,
+    args: string[],
+    input: string,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const child = spawn("git", ["--no-optional-locks", ...args], {
         cwd: repo,

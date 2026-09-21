@@ -3,7 +3,7 @@ import {
   type Changes,
   Counted,
   Labelled,
-  Mode,
+  GitTrackedMode,
   StatusCode,
   type Style,
 } from "../types";
@@ -57,7 +57,7 @@ export class Summary {
   static of(changes: Changes): Summary {
     return new Summary(
       new Map(Object.entries(changes.remaining) as [StatusCode, number][]),
-      changes[Mode.Staged].isEmpty ? 0 : 1,
+      changes[GitTrackedMode.Staged].isEmpty ? 0 : 1,
       changes.ahead,
       changes.upstream ? 0 : 1,
     );

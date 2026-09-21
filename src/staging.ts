@@ -5,7 +5,7 @@ import { Repos } from "./repos";
 import type { AtCursor, Editor, Notifier } from "./types";
 
 @injectable()
-export class Staging {
+export class GitStager {
   constructor(
     @inject(EDITOR) private readonly editor: Editor,
     @inject(NOTIFIER) private readonly notifier: Notifier,
@@ -41,13 +41,17 @@ export class Staging {
   }
 
   private async atCursor(): Promise<AtCursor | undefined> {
-    const active = this.editor.active()!;
+    const cursor = this.editor.active();
+    if (cursor.kind === "nowhere") {
+      this.notifier.notify("no active editor");
+      return undefined;
+    }
     await this.repos.discovered();
-    const repo = this.repos.findRepoContaining(active.path);
+    const repo = this.repos.findRepoContaining(cursor.at.path);
     if (repo === undefined) {
       this.notifier.notify("not inside a repo");
       return undefined;
     }
-    return { active, repo };
+    return { active: cursor.at, repo };
   }
 }

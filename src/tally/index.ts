@@ -2,6 +2,7 @@ import * as path from "path";
 import { inject, injectable } from "tsyringe";
 import BTree from "sorted-btree";
 import { REPOS, WORKSPACE_FOLDERS, STATUS_BAR } from "../di-tokens";
+import { Repos } from "../repos";
 import { Summary } from "./summary";
 import type { Changes, Choice, RepoListener, StatusBar } from "../types";
 
@@ -16,9 +17,11 @@ export class Tally implements RepoListener {
   constructor(
     @inject(STATUS_BAR) private readonly statusBar: StatusBar,
     @inject(WORKSPACE_FOLDERS) private readonly workspaceFolders: string[],
+    @inject(REPOS) repos: Repos,
   ) {
     this.catchUp = setInterval(() => this.reconcile(), Tally.CATCH_UP_MS);
     this.catchUp.unref();
+    repos.subscribe(this);
   }
 
   choices(): Choice[] {

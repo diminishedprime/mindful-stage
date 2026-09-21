@@ -6,6 +6,7 @@ import { Repos } from "./repos";
 import { Tally } from "./tally";
 import { Workspace } from "./workspace";
 import {
+  type Cursor,
   type Destination,
   Direction,
   DestinationKind,
@@ -13,7 +14,7 @@ import {
   type FileDestination,
   type ResolvedDestination,
   type Git,
-  Mode,
+  GitTrackedMode,
   type Notifier,
   type RepoDestination,
   type Route,
@@ -50,20 +51,20 @@ export class Navigation {
     @inject(WORKSPACE) private readonly workspace: Workspace,
   ) {}
 
-  jumpFile(direction: Direction, mode: Mode): Promise<void> {
+  jumpFile(direction: Direction, mode: GitTrackedMode): Promise<void> {
     return this.jump({
       plan: async (workspace) =>
         Navigation.asFile(
-          await workspace.stepFile(this.editor.active()?.path, direction, mode),
+          await workspace.stepFile(this.editor.active(), direction, mode),
         ),
       otherwise: () => this.reportNothingLeft(mode),
     });
   }
 
-  jumpHunk(direction: Direction, mode: Mode): Promise<void> {
+  jumpHunk(direction: Direction, mode: GitTrackedMode): Promise<void> {
     return this.jump({
       plan: (workspace) =>
-        workspace.stepHunk(this.editor.active()!, direction, mode),
+        workspace.stepHunk(this.editor.active(), direction, mode),
       otherwise: () => this.reportNothingLeft(mode),
     });
   }
@@ -73,9 +74,9 @@ export class Navigation {
       plan: async (workspace) =>
         Navigation.asFile(
           await workspace.stepRepo(
-            this.editor.active()?.path,
+            this.editor.active(),
             direction,
-            Mode.Staged,
+            GitTrackedMode.Staged,
           ),
         ),
       otherwise: async () => this.notifier.notify("no staged files"),
@@ -113,8 +114,8 @@ export class Navigation {
     return this.navigate(route);
   }
 
-  private async reportNothingLeft(mode: Mode): Promise<void> {
-    if (mode === Mode.Unstaged && this.tally.anyStaged()) {
+  private async reportNothingLeft(mode: GitTrackedMode): Promise<void> {
+    if (mode === GitTrackedMode.Unstaged && this.tally.anyStaged()) {
       this.notifier.notify(
         "no remaining unstaged files, use `mindfulStage.nextStagedRepo` to navigate through repos ready to be committed.",
       );
@@ -144,7 +145,7 @@ export class Navigation {
     if (resolvedDestination === undefined) {
       return;
     }
-    const from = this.editor.active()?.path;
+    const from = this.editor.active();
     await this.open(resolvedDestination);
     await this.announceRepoCrossing(from, resolvedDestination.file);
     await this.hintIfUntracked(resolvedDestination.file);
@@ -155,8 +156,8 @@ export class Navigation {
   ): Promise<FileDestination | undefined> {
     const changes = await this.repos.byPath(repo).status.value();
     const file =
-      changes[Mode.Unstaged].first(Direction.Next) ??
-      changes[Mode.Staged].first(Direction.Next) ??
+      changes[GitTrackedMode.Unstaged].first(Direction.Next) ??
+      changes[GitTrackedMode.Staged].first(Direction.Next) ??
       (await this.firstOpenableFile(repo));
     if (file === undefined) {
       this.notifier.error(`nothing can be opened in ${path.basename(repo)}`);
@@ -210,7 +211,7 @@ export class Navigation {
   }
 
   private async firstOpenableFile(repo: string): Promise<string | undefined> {
-    const tracked = await this.git.trackedFiles(repo);
+    const tracked = await this.git.trackedFilesFor(repo);
     const readme = Navigation.findReadme(tracked);
     for (const file of readme === undefined ? tracked : [readme, ...tracked]) {
       const candidate = path.join(repo, file);
@@ -228,15 +229,15 @@ export class Navigation {
     }
   }
 
-  private async announceRepoCrossing(
-    from: string | undefined,
-    to: string,
-  ): Promise<void> {
-    if (from === undefined) {
+  private async announceRepoCrossing(from: Cursor, to: string): Promise<void> {
+    if (from.kind === "nowhere") {
       return;
     }
     const repo = this.repos.findRepoContaining(to);
-    if (this.repos.findRepoContaining(from) !== repo && repo !== undefined) {
+    if (
+      this.repos.findRepoContaining(from.at.path) !== repo &&
+      repo !== undefined
+    ) {
       this.notifier.notify(`now in ${path.basename(repo.path)}`);
     }
   }
