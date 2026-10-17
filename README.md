@@ -89,7 +89,7 @@ There is no Marketplace listing. Build and install locally with [pnpm] and
 [just]:
 
 ```sh
-git clone https://git.lan.mjh.io/lab/mindful-stage.git
+git clone https://git.lan.mjh.io/diminishedprime/mindful-stage.git
 cd mindful-stage
 pnpm install
 just install
