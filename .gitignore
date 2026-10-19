@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.vsix
 assets/mindful-stage.json
+reports/
+.stryker-tmp/

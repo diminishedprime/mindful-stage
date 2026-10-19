@@ -1,0 +1,4 @@
+test/setup/vendor/
+test/setup/fixtures/
+pnpm-lock.yaml
+pnpm-workspace.yaml

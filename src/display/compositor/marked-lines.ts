@@ -1,49 +1,57 @@
-import { Change, type Composition, Deletion, type Mark } from "../../types";
+import {
+  Change,
+  type Composition,
+  Deletion,
+  type Mark,
+  type MarkedChange,
+  type Wedge,
+} from "../../types";
 
 export class MarkedLines {
-  private readonly changes = new Map<number, Change>();
-  private readonly aboves = new Map<number, Deletion>();
-  private readonly belows = new Map<number, Deletion>();
+  private readonly changes = new Map<number, MarkedChange>();
+  private readonly aboves = new Map<number, Wedge>();
+  private readonly belows = new Map<number, Wedge>();
 
-  changed(lines: number[], change: Change): void {
+  changed(lines: number[], change: MarkedChange): void {
     for (const line of lines) {
       this.changes.set(line, change);
     }
   }
 
-  deletedAbove(lines: number[], deletion: Deletion): void {
+  deletedAbove(lines: number[], deletion: Wedge): void {
     for (const line of lines) {
       this.aboves.set(line, deletion);
     }
   }
 
-  deletedBelow(lines: number[], deletion: Deletion): void {
+  deletedBelow(lines: number[], deletion: Wedge): void {
     for (const line of lines) {
       this.belows.set(line, deletion);
     }
   }
 
   compositions(): Composition[] {
-    const byMark = new Map<string, Composition>();
-    for (const line of this.marked()) {
-      const mark: Mark = {
-        change: this.changes.get(line) ?? Change.Nothing,
-        above: this.aboves.get(line) ?? Deletion.Nothing,
-        below: this.belows.get(line) ?? Deletion.Nothing,
-      };
-      const key = `${mark.change}/${mark.above}/${mark.below}`;
-      const composition = byMark.get(key) ?? { mark, lines: [] };
-      composition.lines.push(line);
-      byMark.set(key, composition);
+    const marks = new Map<number, Mark>();
+    for (const [line, below] of this.belows) {
+      marks.set(line, `${Change.Nothing}/${Deletion.Nothing}/${below}`);
     }
-    return [...byMark.values()];
+    for (const [line, above] of this.aboves) {
+      marks.set(line, `${Change.Nothing}/${above}/${this.belowOf(line)}`);
+    }
+    for (const [line, change] of this.changes) {
+      marks.set(line, `${change}/${this.aboveOf(line)}/${this.belowOf(line)}`);
+    }
+    return Array.from(
+      Map.groupBy(marks, ([, mark]) => mark),
+      ([mark, lines]) => ({ mark, lines: lines.map(([line]) => line) }),
+    );
   }
 
-  private marked(): Set<number> {
-    return new Set([
-      ...this.changes.keys(),
-      ...this.aboves.keys(),
-      ...this.belows.keys(),
-    ]);
+  private aboveOf(line: number): Deletion {
+    return this.aboves.get(line) ?? Deletion.Nothing;
+  }
+
+  private belowOf(line: number): Deletion {
+    return this.belows.get(line) ?? Deletion.Nothing;
   }
 }

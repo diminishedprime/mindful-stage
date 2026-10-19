@@ -8,85 +8,57 @@ import type { Changes, Choice, RepoListener, StatusBar } from "../types";
 
 @injectable()
 export class Tally implements RepoListener {
-  private static readonly CATCH_UP_MS = 5 * 60 * 1000;
-
   private readonly summaries = new BTree<string, Summary>();
   private total = Summary.none();
-  private readonly catchUp: NodeJS.Timeout;
 
   constructor(
     @inject(STATUS_BAR) private readonly statusBar: StatusBar,
     @inject(WORKSPACE_FOLDERS) private readonly workspaceFolders: string[],
     @inject(REPOS) repos: Repos,
   ) {
-    this.catchUp = setInterval(() => this.reconcile(), Tally.CATCH_UP_MS);
-    this.catchUp.unref();
     repos.subscribe(this);
   }
 
   choices(): Choice[] {
     const choices: Choice[] = [];
     for (const [repo, summary] of this.summaries.entries()) {
-      const detail = summary.plain();
-      if (detail !== "") {
-        choices.push({ label: this.label(repo), detail, repo });
+      const work = summary.plain();
+      if (work !== "") {
+        choices.push({ label: this.label(repo), description: work, repo });
       }
     }
     return choices;
-  }
-
-  anyStaged(): boolean {
-    return this.total.anyStaged;
-  }
-
-  reconcile(): void {
-    this.total = Summary.sum(
-      Array.from(this.summaries.values(), (summary) => summary.asOneRepo()),
-    );
-    this.show();
-  }
-
-  async dispose(): Promise<void> {
-    clearInterval(this.catchUp);
-    await this.statusBar.dispose();
   }
 
   refreshed(repo: string, changes: Changes): void {
     const previous = this.summaries.get(repo) ?? Summary.none();
     const next = Summary.of(changes);
     this.summaries.set(repo, next);
-    this.total = this.total.minus(previous.asOneRepo()).plus(next.asOneRepo());
+    this.total = this.total.minus(previous).plus(next);
     this.show();
   }
 
   removed(repo: string): void {
     const gone = this.summaries.get(repo) ?? Summary.none();
     this.summaries.delete(repo);
-    this.total = this.total.minus(gone.asOneRepo());
+    this.total = this.total.minus(gone);
+    this.show();
+  }
+
+  async initializing(starting: Promise<void>): Promise<void> {
+    this.statusBar.show("initializing...");
+    await starting;
     this.show();
   }
 
   private show(): void {
-    this.statusBar.show(this.total.terse(), this.detail());
-  }
-
-  private detail(): string {
-    const rows = this.choices().map(
-      ({ label, detail }) => `- \`${label}\` ${detail}`,
-    );
-    if (rows.length === 0) {
-      return "No outstanding changes.";
-    }
-    return rows.join("\n");
+    this.statusBar.show(this.total.terse());
   }
 
   private label(repo: string): string {
-    const workspaceFolder = this.workspaceFolders.find((r) =>
-      repo.startsWith(r + path.sep),
-    );
-    if (workspaceFolder === undefined) {
-      return repo;
-    }
-    return path.relative(workspaceFolder, repo);
+    const relative = this.workspaceFolders
+      .map((folder) => path.relative(folder, repo))
+      .find((inside) => !inside.startsWith(".."));
+    return relative || path.basename(repo);
   }
 }

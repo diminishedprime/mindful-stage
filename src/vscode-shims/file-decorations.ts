@@ -1,49 +1,37 @@
-import * as vscode from "vscode";
+import {
+  type Disposable,
+  EventEmitter,
+  type FileDecoration,
+  ThemeColor,
+  Uri,
+  window,
+} from "vscode";
 import { injectable } from "tsyringe";
-import { type FileBadge, type FileDecorations, NO_BADGE } from "../types";
-
-type Decorated =
-  | { kind: "nothing" }
-  | { kind: "decoration"; decoration: vscode.FileDecoration };
-
-const NOT_DECORATED: Decorated = { kind: "nothing" };
+import type { FileBadge, FileDecorations } from "../types";
 
 @injectable()
 export class VscodeFileDecorations implements FileDecorations {
-  private readonly changed = new vscode.EventEmitter<vscode.Uri[]>();
+  private readonly changed = new EventEmitter<Uri[]>();
   private badges = new Map<string, FileBadge>();
-  private readonly registration: vscode.Disposable;
+  private readonly registration: Disposable;
 
   constructor() {
-    this.registration = vscode.window.registerFileDecorationProvider({
+    this.registration = window.registerFileDecorationProvider({
       onDidChangeFileDecorations: this.changed.event,
-      provideFileDecoration: (uri) => {
-        const decorated = this.decorationFor(uri.fsPath);
-        switch (decorated.kind) {
-          case "nothing":
-            return undefined;
-          case "decoration":
-            return decorated.decoration;
-        }
-      },
+      provideFileDecoration: (uri) => this.decorationFor(uri.fsPath),
     });
   }
 
-  private decorationFor(file: string): Decorated {
-    const badge = this.badgeFor(file);
-    switch (badge.kind) {
-      case "nothing":
-        return NOT_DECORATED;
-      case "badge":
-        return {
-          kind: "decoration",
-          decoration: {
-            badge: badge.badge,
-            color: new vscode.ThemeColor(badge.color),
-            propagate: true,
-          },
-        };
+  private decorationFor(file: string): FileDecoration | undefined {
+    const badge = this.badges.get(file);
+    if (badge === undefined) {
+      return undefined;
     }
+    return {
+      badge: badge.badge,
+      color: new ThemeColor(badge.color),
+      propagate: true,
+    };
   }
 
   decorate(badges: Map<string, FileBadge>): void {
@@ -52,7 +40,7 @@ export class VscodeFileDecorations implements FileDecorations {
     if (touched.length === 0) {
       return;
     }
-    this.changed.fire(touched.map((file) => vscode.Uri.file(file)));
+    this.changed.fire(touched.map((file) => Uri.file(file)));
   }
 
   async dispose(): Promise<void> {
@@ -68,21 +56,14 @@ export class VscodeFileDecorations implements FileDecorations {
       }
     }
     for (const [file, badge] of after) {
-      if (!this.same(this.badgeFor(file), badge)) {
+      if (!this.same(this.badges.get(file), badge)) {
         touched.push(file);
       }
     }
     return touched;
   }
 
-  private badgeFor(file: string): FileBadge {
-    return this.badges.get(file) ?? NO_BADGE;
-  }
-
-  private same(before: FileBadge, after: FileBadge): boolean {
-    if (before.kind === "nothing" || after.kind === "nothing") {
-      return before.kind === after.kind;
-    }
-    return before.badge === after.badge && before.color === after.color;
+  private same(before: FileBadge | undefined, after: FileBadge): boolean {
+    return before?.badge === after.badge && before.color === after.color;
   }
 }

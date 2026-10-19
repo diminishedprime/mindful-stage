@@ -1,8 +1,13 @@
 import * as path from "path";
 import { inject, injectable } from "tsyringe";
-import Gitignore from "gitignore-fs";
-import { WORKSPACE_FOLDERS, WATCHER } from "./di-tokens";
-import type { Disposable, Watcher, WorkspaceListener } from "./types";
+import { GITIGNORES, WORKSPACE_FOLDERS, WATCHER } from "./di-tokens";
+import { Gitignores } from "./gitignores";
+import type {
+  Disposable,
+  FileEvent,
+  Watcher,
+  WorkspaceListener,
+} from "./types";
 
 @injectable()
 export class WorkspaceFileWatcher {
@@ -17,9 +22,8 @@ export class WorkspaceFileWatcher {
     ["info", "exclude"],
   ];
 
-  private readonly gitignore = new Gitignore();
-
   constructor(
+    @inject(GITIGNORES) private readonly gitignore: Gitignores,
     @inject(WATCHER) private readonly watcher: Watcher,
     @inject(WORKSPACE_FOLDERS) private readonly workspaceFolders: string[],
   ) {}
@@ -27,8 +31,8 @@ export class WorkspaceFileWatcher {
   watch(listener: WorkspaceListener): Promise<Disposable[]> {
     return Promise.all(
       this.workspaceFolders.map((workspaceFolder) =>
-        this.watcher.watch(workspaceFolder, (changed) =>
-          this.relayFileChange(changed, listener),
+        this.watcher.watch(workspaceFolder, (changed, event) =>
+          this.relayFileChange(changed, event, listener),
         ),
       ),
     );
@@ -36,10 +40,14 @@ export class WorkspaceFileWatcher {
 
   private async relayFileChange(
     changedFile: string,
+    event: FileEvent,
     listener: WorkspaceListener,
   ): Promise<void> {
     if (WorkspaceFileWatcher.isDotGit(changedFile)) {
-      return listener.gitDirectoryChanged(changedFile);
+      if (event === "deleted") {
+        return listener.gitDirectoryDeleted(changedFile);
+      }
+      return listener.gitDirectoryAdded(changedFile);
     }
 
     if (
@@ -53,12 +61,12 @@ export class WorkspaceFileWatcher {
       this.gitignore.clearCache();
     }
 
-    if (WorkspaceFileWatcher.insideDotGitFolder(changedFile)) {
-      return listener.gitInternalsChanged(changedFile);
+    if (event === "deleted") {
+      await listener.pathDeleted(changedFile);
     }
 
-    if (WorkspaceFileWatcher.isGitIgnoreFile(changedFile)) {
-      return listener.workingTreeChanged(changedFile);
+    if (WorkspaceFileWatcher.insideDotGitFolder(changedFile)) {
+      return listener.gitInternalsChanged(changedFile);
     }
 
     if (await this.gitignore.ignores(changedFile)) {

@@ -1,5 +1,8 @@
-set shell := ["bash", "-euo", "pipefail", "-c"]
+set shell := ["zsh", "-euo", "pipefail", "-c"]
+set script-interpreter := ["zsh", "-euo", "pipefail"]
 set fallback
+
+mod e2e ".just/e2e.just"
 
 default:
     @just --list
@@ -10,18 +13,27 @@ build:
 
 # Regenerate the icon font from the SVGs in assets/icons.
 icons:
-    pnpm exec fantasticon
-    node scripts/sync-icons.mjs
+    pnpm icons
 
 # Typecheck without emitting.
 check:
     pnpm typecheck
 
-# Run the test suite.
-test:
-    pnpm exec vitest run
+format:
+    pnpm exec prettier --write --ignore-unknown .
 
-# Build a .vsix and install it into the local VS Code.
-install: build
-    pnpm exec vsce package --no-dependencies
-    code --install-extension mindful-stage-*.vsix
+# Run the test suite against the recorded fakes.
+test:
+    pnpm pack-fixtures
+    NODE_COMPILE_CACHE=node_modules/.cache/node-compile pnpm exec vitest run
+
+# Run the test suite without the fakes.
+test-real:
+    MINDFUL_STAGE_MODE=real pnpm exec vitest run
+
+# Build and install into VS Code.
+install:
+    pnpm install
+    pnpm build
+    pnpm package
+    code --install-extension mindful-stage-$(node -p 'require("./package.json").version').vsix

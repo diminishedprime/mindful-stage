@@ -1,68 +1,87 @@
-import * as vscode from "vscode";
 import { inject, injectable } from "tsyringe";
-import { EDITOR, GUTTER_ICON, PALETTE } from "../di-tokens";
-import {
-  type Band,
-  type Edge,
-  GutterIcon,
-  NO_BAND,
-  NO_EDGE,
-} from "../display/gutter-icon";
+import { EDITOR, PALETTE, VSCODE } from "../di-tokens";
 import { Palette } from "../palette";
-import { render } from "../display/svg";
 import {
-  Change,
+  colorPlaceholders,
+  drawTemplates,
+} from "../templates/gutter-templates.ts" with { type: "macro" };
+import {
   type Composition,
   type Decorations,
-  Deletion,
+  type Mark,
   type PaletteKey,
+  SCOPES,
 } from "../types";
-import { VscodeEditor } from "./editor";
 
-const CHANGES = Object.values(Change);
-const DELETIONS = Object.values(Deletion);
+type Decoration = { dispose(): void };
 
-type Mark = vscode.TextEditorDecorationType;
+type Colors = Record<PaletteKey, string>;
 
-type MarkPalette = Record<Change, Record<Deletion, Record<Deletion, Mark>>>;
+const PALETTE_KEYS = Object.keys(SCOPES) as PaletteKey[];
 
-const EMPTY: readonly vscode.Range[] = [];
+const GUTTER_TEMPLATES = drawTemplates();
+
+const COLOR_PLACEHOLDERS = colorPlaceholders();
+
+export type VscodeDecorationApi = {
+  window: {
+    createTextEditorDecorationType(options: {
+      gutterIconPath?: unknown;
+      gutterIconSize?: string;
+    }): Decoration;
+  };
+  Uri: { parse(value: string): unknown };
+  Range: new (
+    startLine: number,
+    startCharacter: number,
+    endLine: number,
+    endCharacter: number,
+  ) => unknown;
+};
+
+type DecoratedEditors = {
+  editorsShowing(file: string): {
+    setDecorations(mark: Decoration, ranges: readonly unknown[]): void;
+  }[];
+};
+
+type MarkPalette = Record<Mark, Decoration>;
+
+const EMPTY: readonly unknown[] = [];
 
 @injectable()
 export class VscodeDecorations implements Decorations {
   private marks: MarkPalette | undefined;
 
   constructor(
-    @inject(EDITOR) private readonly editors: VscodeEditor,
-    @inject(GUTTER_ICON) private readonly icons: GutterIcon,
+    @inject(EDITOR) private readonly editors: DecoratedEditors,
     @inject(PALETTE) private readonly palette: Palette,
-  ) {
-    this.marks = this.build();
-  }
+    @inject(VSCODE) private readonly vscode: VscodeDecorationApi,
+  ) {}
 
   render(file: string, compositions: Composition[]): void {
     const marks = this.marks;
     if (marks === undefined) {
       return;
     }
-    const ranges = new Map<Mark, vscode.Range[]>();
+    const ranges = new Map<Decoration, unknown[]>();
     for (const { mark, lines } of compositions) {
       ranges.set(
-        marks[mark.change][mark.above][mark.below],
-        lines.map((line) => new vscode.Range(line, 0, line, 0)),
+        marks[mark],
+        lines.map((line) => new this.vscode.Range(line, 0, line, 0)),
       );
     }
     for (const editor of this.editors.editorsShowing(file)) {
-      for (const mark of VscodeDecorations.marksIn(marks)) {
-        editor.setDecorations(mark, ranges.get(mark) ?? EMPTY);
+      for (const decoration of Object.values(marks)) {
+        editor.setDecorations(decoration, ranges.get(decoration) ?? EMPTY);
       }
     }
   }
 
   async recolor(): Promise<void> {
-    await this.palette.reload();
+    const colours = await this.palette.colours();
     this.release();
-    this.marks = this.build();
+    this.marks = this.build(colours);
   }
 
   async dispose(): Promise<void> {
@@ -73,77 +92,36 @@ export class VscodeDecorations implements Decorations {
     if (this.marks === undefined) {
       return;
     }
-    for (const mark of VscodeDecorations.marksIn(this.marks)) {
-      mark.dispose();
+    for (const decoration of Object.values(this.marks)) {
+      decoration.dispose();
     }
     this.marks = undefined;
   }
 
-  private build(): MarkPalette {
-    const palette = {} as MarkPalette;
-    for (const change of CHANGES) {
-      palette[change] = {} as Record<Deletion, Record<Deletion, Mark>>;
-      for (const above of DELETIONS) {
-        palette[change][above] = {} as Record<Deletion, Mark>;
-        for (const below of DELETIONS) {
-          palette[change][above][below] = this.markFor(change, above, below);
-        }
-      }
-    }
-    return palette;
+  private build(colors: Colors): MarkPalette {
+    return Object.fromEntries(
+      Object.entries(GUTTER_TEMPLATES).map(([key, template]) => [
+        key,
+        this.decorationFor(VscodeDecorations.filled(template, colors)),
+      ]),
+    ) as MarkPalette;
   }
 
-  private static *marksIn(palette: MarkPalette): Iterable<Mark> {
-    for (const byAbove of Object.values(palette)) {
-      for (const byBelow of Object.values(byAbove)) {
-        for (const mark of Object.values(byBelow)) {
-          yield mark;
-        }
-      }
+  private static filled(template: string, colors: Colors): string {
+    let markup = template;
+    for (const key of PALETTE_KEYS) {
+      markup = markup.replaceAll(
+        COLOR_PLACEHOLDERS[key],
+        encodeURIComponent(colors[key]),
+      );
     }
+    return markup;
   }
 
-  private markFor(change: Change, above: Deletion, below: Deletion): Mark {
-    const markup = render(
-      this.icons.draw({
-        band: this.bandFor(change),
-        above: this.edgeFor(above),
-        below: this.edgeFor(below),
-      }),
-    );
-    return vscode.window.createTextEditorDecorationType({
-      gutterIconPath: vscode.Uri.parse(
-        `data:image/svg+xml,${encodeURIComponent(markup)}`,
-      ),
+  private decorationFor(encoded: string): Decoration {
+    return this.vscode.window.createTextEditorDecorationType({
+      gutterIconPath: this.vscode.Uri.parse(`data:image/svg+xml,${encoded}`),
       gutterIconSize: "contain",
     });
-  }
-
-  private bandFor(change: Change): Band {
-    switch (change) {
-      case Change.Nothing:
-        return NO_BAND;
-      case Change.Staged:
-        return { kind: "solid", color: this.color("stagedChange") };
-      case Change.Unstaged:
-        return { kind: "hatched", color: this.color("unstagedChange") };
-      case Change.Untracked:
-        return { kind: "hatched", color: this.color("untracked") };
-    }
-  }
-
-  private edgeFor(deletion: Deletion): Edge {
-    switch (deletion) {
-      case Deletion.Nothing:
-        return NO_EDGE;
-      case Deletion.Staged:
-        return { kind: "wedge", color: this.color("stagedDeletion") };
-      case Deletion.Unstaged:
-        return { kind: "wedge", color: this.color("unstagedDeletion") };
-    }
-  }
-
-  private color(of: PaletteKey): string {
-    return this.palette.resolve(of);
   }
 }

@@ -1,4 +1,5 @@
 import { Direction } from "./types";
+import { range } from "./util/range";
 
 export class Ring<
   Item,
@@ -22,8 +23,8 @@ export class Ring<
     return new Ring(items, keyForItem);
   }
 
-  get isEmpty(): boolean {
-    return this.items.length === 0;
+  keyOf(item: Item): Key {
+    return this.keyForItem(item);
   }
 
   first(direction: Direction): Item | undefined {
@@ -47,14 +48,6 @@ export class Ring<
     return this.walk(direction, 0, this.items.length);
   }
 
-  from(home: Key, direction: Direction): Iterable<Item> {
-    return this.walk(
-      direction,
-      this.travelled(home, direction),
-      this.items.length + 1,
-    );
-  }
-
   after(home: Key, direction: Direction): Iterable<Item> {
     return this.walk(
       direction,
@@ -63,17 +56,10 @@ export class Ring<
     );
   }
 
-  private *walk(
-    direction: Direction,
-    from: number,
-    stops: number,
-  ): Iterable<Item> {
-    if (this.items.length === 0) {
-      return;
-    }
-    for (let step = 0; step < stops; step += 1) {
-      yield this.at((from + step) % this.items.length, direction)!;
-    }
+  private walk(direction: Direction, from: number, stops: number): Item[] {
+    return range(0, stops).map((step) =>
+      this.at((from + step) % this.items.length, direction)!,
+    );
   }
 
   private at(travelled: number, direction: Direction): Item | undefined {
@@ -96,30 +82,15 @@ export class Ring<
   }
 
   private lowerBound(key: Key): number {
-    let low = 0;
-    let high = this.items.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (this.keyForItem(this.items[mid]!) < key) {
-        low = mid + 1;
-      } else {
-        high = mid;
-      }
-    }
-    return low;
+    return this.firstIndex((item) => this.keyForItem(item) >= key);
   }
 
   private upperBound(key: Key): number {
-    let low = 0;
-    let high = this.items.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (this.keyForItem(this.items[mid]!) <= key) {
-        low = mid + 1;
-      } else {
-        high = mid;
-      }
-    }
-    return low;
+    return this.firstIndex((item) => this.keyForItem(item) > key);
+  }
+
+  private firstIndex(matches: (item: Item) => boolean): number {
+    const index = this.items.findIndex(matches);
+    return index === -1 ? this.items.length : index;
   }
 }

@@ -1,20 +1,20 @@
-export type Completed<Value> = (value: Value) => void;
+export type Completed<Value> = (value: Value) => Promise<void>;
+
+export type Failed = (error: unknown) => Promise<void>;
 
 // Keeps a value fresh by re-running an expensive computation, with the
-// guarantee that at most one run is ever in flight and that anyone who asks
-// for a rerun mid-flight waits for a run that started after they asked.
+// guarantee that at most one run is ever in flight.
 //
 // The contract:
 //
-// - `value()` hands back the latest result, starting the first run if nothing
-//   is known yet. `fresh()` prefers a run in flight over the cached value.
+// - `start()` begins the first run. `value()` hands back the latest result,
+//   waiting for that first run if nothing is known yet. `fresh()` prefers a
+//   run in flight over the cached value.
 // - `rerun()` while idle just runs. `rerun()` while a run is in flight queues
-//   exactly one follow-up, started only once the current run completes, and
-//   resolves every mid-flight caller when that follow-up settles. Thirty
-//   callers during one run cost one extra run, not thirty.
-// - A run that fails still honours the queue, so a transient error can't
-//   strand a pending request.
-// - `completed(value)` fires after every completed run.
+//   exactly one follow-up, started once the current run settles. Thirty
+//   reruns during one run cost one extra run, not thirty.
+// - `completed(value)` fires after every completed run, and `failed(error)`
+//   after every failed one. A failed run still starts the queued follow-up.
 //
 // A repo's git status is the motivating case. Status is a full read of the
 // working tree, so a change that lands while one is running is missed by it
@@ -23,83 +23,70 @@ export type Completed<Value> = (value: Value) => void;
 //     const status = new Refresher(
 //       () => this.statusOf(),
 //       (changes) => this.refreshed(changes),
+//       (error) => this.warn(error),
 //     );
-//     status.value();   // navigation: latest Changes, fetched on first use
+//     status.start();   // as soon as the repo is known
+//     status.value();   // navigation: latest Changes
 //     status.rerun();   // watcher: a file changed, refresh once we can
 export class Refresher<Value> {
   private latest: Value | undefined;
   private running: Promise<Value> | undefined;
-  private waiting: Array<() => void> | undefined;
+  private queued = false;
+  private settled: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly compute: () => Promise<Value>,
     private readonly completed: Completed<Value>,
+    private readonly failed: Failed,
   ) {}
 
-  get current(): Value | undefined {
-    return this.latest;
-  }
-
   get inFlight(): Promise<unknown> {
-    return Promise.allSettled([this.running]);
+    return this.settled;
   }
 
-  ensureStarted(): void {
-    if (this.latest === undefined && this.running === undefined) {
-      this.run();
-    }
+  start(): void {
+    this.run();
   }
 
   async value(): Promise<Value> {
-    this.ensureStarted();
     return this.latest ?? (await this.running!);
   }
 
   async fresh(): Promise<Value> {
-    this.ensureStarted();
     return (await this.running) ?? this.latest!;
   }
 
-  rerun(): Promise<void> {
+  rerun(): void {
     if (this.running === undefined) {
-      return Refresher.settled(this.run());
-    }
-    this.waiting ??= [];
-    return new Promise((resolve) => this.waiting!.push(resolve));
-  }
-
-  private run(): Promise<Value> {
-    this.running ??= this.compute().then(
-      (value) => {
-        this.latest = value;
-        this.running = undefined;
-        this.completed(value);
-        this.drain();
-        return value;
-      },
-      (error) => {
-        this.running = undefined;
-        this.drain();
-        throw error;
-      },
-    );
-    return this.running;
-  }
-
-  private drain(): void {
-    const waiting = this.waiting;
-    if (waiting === undefined) {
+      this.run();
       return;
     }
-    this.waiting = undefined;
-    void Refresher.settled(this.run()).then(() => {
-      for (const resolve of waiting) {
-        resolve();
-      }
-    });
+    this.queued = true;
   }
 
-  private static async settled(run: Promise<unknown>): Promise<void> {
-    await Promise.allSettled([run]);
+  private run(): void {
+    const running = this.compute();
+    this.running = running;
+    this.settled = Promise.allSettled([this.settled, this.settle(running)]);
+  }
+
+  private async settle(running: Promise<Value>): Promise<void> {
+    const [result] = await Promise.allSettled([running]);
+    this.running = undefined;
+    this.startQueued();
+    if (result.status === "rejected") {
+      await this.failed(result.reason);
+      return;
+    }
+    this.latest = result.value;
+    await this.completed(result.value);
+  }
+
+  private startQueued(): void {
+    if (!this.queued) {
+      return;
+    }
+    this.queued = false;
+    this.run();
   }
 }

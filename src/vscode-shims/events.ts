@@ -1,12 +1,36 @@
-import * as vscode from "vscode";
+import { inject, injectable } from "tsyringe";
+import { VSCODE } from "../di-tokens";
 import type { Events } from "../types";
 
-export class VscodeEvents implements Events {
-  private readonly subscriptions: vscode.Disposable[] = [];
+type Subscription = { dispose(): unknown };
 
-  visibleFilesChanged(handler: (files: string[]) => void): void {
+type ConfigurationChange = { affectsConfiguration(section: string): boolean };
+
+type VisibleEditor = { document: { uri: { fsPath: string } } };
+
+export type VscodeEventsApi = {
+  window: {
+    onDidChangeVisibleTextEditors(
+      listener: (editors: readonly VisibleEditor[]) => unknown,
+    ): Subscription;
+    onDidChangeActiveColorTheme(listener: () => unknown): Subscription;
+  };
+  workspace: {
+    onDidChangeConfiguration(
+      listener: (event: ConfigurationChange) => unknown,
+    ): Subscription;
+  };
+};
+
+@injectable()
+export class VscodeEvents implements Events {
+  private readonly subscriptions: Subscription[] = [];
+
+  constructor(@inject(VSCODE) private readonly vscode: VscodeEventsApi) {}
+
+  visibleFilesChanged(handler: (files: string[]) => Promise<void>): void {
     this.subscriptions.push(
-      vscode.window.onDidChangeVisibleTextEditors((editors) =>
+      this.vscode.window.onDidChangeVisibleTextEditors((editors) =>
         handler([
           ...new Set(editors.map((editor) => editor.document.uri.fsPath)),
         ]),
@@ -14,22 +38,22 @@ export class VscodeEvents implements Events {
     );
   }
 
-  colorsChanged(handler: () => void): void {
+  colorsChanged(handler: () => Promise<void>): void {
     this.subscriptions.push(
-      vscode.window.onDidChangeActiveColorTheme(() => handler()),
-      vscode.workspace.onDidChangeConfiguration((event) => {
+      this.vscode.window.onDidChangeActiveColorTheme(() => handler()),
+      this.vscode.workspace.onDidChangeConfiguration(async (event) => {
         if (event.affectsConfiguration("workbench.colorCustomizations")) {
-          handler();
+          await handler();
         }
       }),
     );
   }
 
-  decorationsToggled(handler: () => void): void {
+  decorationsToggled(handler: () => Promise<void>): void {
     this.subscriptions.push(
-      vscode.workspace.onDidChangeConfiguration((event) => {
+      this.vscode.workspace.onDidChangeConfiguration(async (event) => {
         if (event.affectsConfiguration("mindfulStage.decorations")) {
-          handler();
+          await handler();
         }
       }),
     );

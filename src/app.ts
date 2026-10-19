@@ -1,50 +1,28 @@
-import type * as vscode from "vscode";
 import { inject, injectable } from "tsyringe";
 import { Commands } from "./commands";
-import {
-  COMMAND_REGISTRY,
-  COMMANDS,
-  DECORATIONS,
-  EVENTS,
-  FILE_BADGES,
-  FILE_DECORATIONS,
-  GUTTERS,
-  LOGGER,
-} from "./di-tokens";
+import { COMMANDS, FILE_BADGES, GUTTERS, REPOS, TALLY } from "./di-tokens";
 import { FileBadges } from "./display/file-badges";
 import { Gutters } from "./display/gutters";
-import { Logger } from "./logger";
-import type {
-  CommandRegistry,
-  Decorations,
-  Events,
-  FileDecorations,
-} from "./types";
+import { Repos } from "./repos";
+import { Tally } from "./tally";
 
 @injectable()
 export class App {
   constructor(
     @inject(COMMANDS) private readonly commands: Commands,
-    @inject(COMMAND_REGISTRY) private readonly registry: CommandRegistry,
-    @inject(DECORATIONS) private readonly decorations: Decorations,
-    @inject(EVENTS) private readonly events: Events,
-    @inject(LOGGER) private readonly logger: Logger,
-    @inject(GUTTERS) _gutters: Gutters,
-    @inject(FILE_DECORATIONS)
-    private readonly fileDecorations: FileDecorations,
+    @inject(GUTTERS) private readonly gutters: Gutters,
+    @inject(REPOS) private readonly repos: Repos,
+    @inject(TALLY) private readonly tally: Tally,
     @inject(FILE_BADGES) _fileBadges: FileBadges,
   ) {}
 
-  start(context: vscode.ExtensionContext): void {
-    this.commands.register();
+  async start(): Promise<void> {
+    await this.tally.initializing(this.standUp());
+  }
 
-    context.subscriptions.push(
-      { dispose: () => this.registry.dispose() },
-      { dispose: () => this.commands.dispose() },
-      { dispose: () => this.decorations.dispose() },
-      { dispose: () => this.fileDecorations.dispose() },
-      { dispose: () => this.events.dispose() },
-      { dispose: () => this.logger.dispose() },
-    );
+  private async standUp(): Promise<void> {
+    await this.repos.start();
+    await this.gutters.start();
+    this.commands.register();
   }
 }

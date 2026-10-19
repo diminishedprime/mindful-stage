@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "plugins": [
+    "@stryker-mutator/vitest-runner",
+    "./scripts/stryker-ignore-logging.mjs"
+  ],
+  "ignorers": ["logging"],
+  "testRunner": "vitest",
+  "tsconfigFile": "no-tsconfig-rewrite-needed.json",
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/vscode-shims/**",
+    "!src/main.ts",
+    "!src/logger.ts",
+    "!src/graph.ts",
+    "!src/git-commands.ts",
+    "!src/templates/**"
+  ],
+  "timeoutMS": 1000,
+  "ignoreStatic": true
+}

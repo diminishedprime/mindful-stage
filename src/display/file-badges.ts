@@ -6,7 +6,6 @@ import {
   type Badged,
   Change,
   type Changes,
-  Direction,
   type FileBadge,
   type FileDecorations,
   type PaletteKey,
@@ -63,9 +62,10 @@ export class FileBadges implements RepoListener {
 
   private sources(changes: Changes): Record<Badged, Iterable<string>> {
     return {
-      [Change.Staged]: changes[GitTrackedMode.Staged].all(Direction.Next),
-      [Change.Unstaged]: changes[GitTrackedMode.Unstaged].all(Direction.Next),
+      [Change.Staged]: changes[GitTrackedMode.Staged],
+      [Change.Unstaged]: changes[GitTrackedMode.Unstaged],
       [Change.Untracked]: changes.untracked,
+      [Change.Deleted]: changes.deleted,
     };
   }
 
@@ -76,11 +76,13 @@ export class FileBadges implements RepoListener {
       case Change.Unstaged:
         return this.badge("M", "unstagedChange");
       case Change.Untracked:
-        return this.badge("A", "untracked");
+        return this.badge("?", "untracked");
+      case Change.Deleted:
+        return this.badge("D", "unstagedDeletion");
     }
   }
 
   private badge(badge: string, key: PaletteKey): FileBadge {
-    return { kind: "badge", badge, color: this.palette.colorId(key) };
+    return { badge, color: this.palette.colorId(key) };
   }
 }

@@ -1,173 +1,131 @@
-import * as fs from "fs/promises";
 import * as path from "path";
 import { parse } from "jsonc-parser";
 import { inject, injectable } from "tsyringe";
-import { MANIFEST, SETTINGS, THEME } from "../di-tokens";
+import { FS, SETTINGS, THEME } from "../di-tokens";
+import { contributedDefaults } from "../templates/contributed-colours.ts" with { type: "macro" };
 import {
   CustomizationsSchema,
-  type Customizations,
-  NlsSchema,
-  type NlsEntry,
+  type Fs,
   type PaletteKey,
   SCOPES,
   type Settings,
   type Theme,
-  type ThemeEntry,
   ThemeFileSchema,
   type TokenColor,
 } from "../types";
-import { Manifest } from "./manifest";
+
+const DEFAULTS = contributedDefaults();
+
+export type Colours = Record<PaletteKey, string>;
+
+const PALETTE_KEYS = Object.keys(SCOPES) as PaletteKey[];
 
 @injectable()
 export class Palette {
-  private customized: Record<string, string> = {};
-  private tokens: TokenColor[] = [];
-
   constructor(
-    @inject(MANIFEST) private readonly manifest: Manifest,
+    @inject(FS) private readonly fs: Fs,
     @inject(SETTINGS) private readonly settings: Settings,
     @inject(THEME) private readonly theme: Theme,
-  ) {
-    this.requireContributed();
-  }
+  ) {}
 
-  async reload(): Promise<void> {
+  async colours(): Promise<Colours> {
     const active = this.settings.colorTheme();
-    this.customized = this.flattened(
-      CustomizationsSchema.parse(this.settings.colorCustomizations()),
-      active,
+    const { colours, byTheme } = CustomizationsSchema.parse(
+      this.settings.colorCustomizations(),
     );
-    this.tokens = await this.tokensOf(active);
+    const customized = { ...colours, ...byTheme[active] };
+    const tokens = await this.tokensFor(active);
+    const variant = this.theme.variant();
+    return Object.fromEntries(
+      PALETTE_KEYS.map((key) => [
+        key,
+        customized[this.colorId(key)] ??
+          Palette.fromScope(tokens, SCOPES[key]) ??
+          DEFAULTS[key][variant],
+      ]),
+    ) as Colours;
   }
 
   colorId(key: PaletteKey): string {
     return `mindfulStage.${key}`;
   }
 
-  resolve(key: PaletteKey): string {
-    const id = this.colorId(key);
-    return (
-      this.customized[id] ?? this.fromScope(SCOPES[key]) ?? this.contributed(id)
-    );
-  }
-
-  private requireContributed(): void {
-    const missing = (Object.keys(SCOPES) as PaletteKey[])
-      .map((key) => this.colorId(key))
-      .filter((id) => this.manifest.defaultsFor(id) === undefined);
-    if (missing.length > 0) {
+  private async tokensFor(active: string): Promise<TokenColor[]> {
+    try {
+      return await this.tokensOf(active);
+    } catch (error) {
       throw new Error(
-        `package.json contributes.colors is missing ${missing.join(", ")}`,
+        `couldn't read the ${active} theme because ${(error as Error).message}, mindful stage won't work until it's fixed`,
       );
     }
   }
 
-  private contributed(id: string): string {
-    const defaults = this.manifest.defaultsFor(id);
-    if (defaults === undefined) {
-      throw new Error(`no contributed colour for ${id}`);
-    }
-    return defaults[this.theme.variant()];
-  }
-
-  private fromScope(wanted: string): string | undefined {
+  private static fromScope(
+    tokens: TokenColor[],
+    wanted: string,
+  ): string | undefined {
     return (
-      this.matching((scope) => scope === wanted) ??
-      this.matching((scope) => scope.startsWith(`${wanted}.`))
+      Palette.matching(tokens, (scope) => scope === wanted) ??
+      Palette.matching(tokens, (scope) => scope.startsWith(`${wanted}.`))
     );
   }
 
-  private matching(hit: (scope: string) => boolean): string | undefined {
+  private static matching(
+    tokens: TokenColor[],
+    hit: (scope: string) => boolean,
+  ): string | undefined {
     let found: string | undefined;
-    for (const token of this.tokens) {
-      const foreground = token.settings?.foreground;
-      if (typeof foreground === "string" && this.scopesOf(token).some(hit)) {
+    for (const token of tokens) {
+      const foreground = token.settings.foreground;
+      if (typeof foreground === "string" && Palette.scopesOf(token).some(hit)) {
         found = foreground;
       }
     }
     return found;
   }
 
-  private scopesOf(token: TokenColor): string[] {
-    if (typeof token.scope === "string") {
-      return token.scope.split(",").map((scope) => scope.trim());
-    }
-    if (token.scope === undefined) {
-      return [];
-    }
-    return token.scope;
+  private static scopesOf(token: TokenColor): string[] {
+    return [token.scope]
+      .flat()
+      .flatMap((scope) => scope.split(","))
+      .map((scope) => scope.trim());
   }
 
   private async tokensOf(active: string): Promise<TokenColor[]> {
     for (const theme of this.theme.installed()) {
-      if (await this.isNamed(theme, active)) {
+      if ((theme.id ?? theme.label) === active) {
         return this.tokensIn(theme.file);
       }
     }
     return [];
   }
 
-  private async isNamed(theme: ThemeEntry, active: string): Promise<boolean> {
-    if (theme.id === active || theme.label === active) {
-      return true;
+  private async tokensIn(
+    file: string,
+    read = new Set<string>(),
+  ): Promise<TokenColor[]> {
+    if (read.has(file)) {
+      throw new Error(`${path.basename(file)} includes itself`);
     }
-    if (!theme.label?.startsWith("%") || !theme.label.endsWith("%")) {
-      return false;
+    read.add(file);
+    const parsed = ThemeFileSchema.safeParse(await this.read(file));
+    if (!parsed.success) {
+      throw new Error(`${path.basename(file)} isn't a valid theme file`);
     }
-    const strings = NlsSchema.parse(await this.read(theme.nls));
-    return this.named(strings[theme.label.slice(1, -1)]) === active;
-  }
-
-  private async tokensIn(file: string, depth = 10): Promise<TokenColor[]> {
-    if (depth === 0) {
-      return [];
-    }
-    const theme = ThemeFileSchema.parse(await this.read(file));
+    const theme = parsed.data;
     let included: TokenColor[] = [];
     if (theme.include !== undefined) {
       included = await this.tokensIn(
         path.join(path.dirname(file), theme.include),
-        depth - 1,
+        read,
       );
     }
     return [...included, ...(theme.tokenColors ?? [])];
   }
 
   private async read(file: string): Promise<unknown> {
-    return parse(await fs.readFile(file, "utf8"));
-  }
-
-  private flattened(
-    customizations: Customizations,
-    active: string,
-  ): Record<string, string> {
-    const flattened: Record<string, string> = {};
-    for (const [id, value] of Object.entries(customizations)) {
-      if (typeof value === "string") {
-        flattened[id] = value;
-      }
-    }
-    return { ...flattened, ...this.forTheme(customizations, active) };
-  }
-
-  private forTheme(
-    customizations: Customizations,
-    active: string,
-  ): Record<string, string> {
-    const themed = customizations[`[${active}]`];
-    if (themed === undefined || typeof themed === "string") {
-      return {};
-    }
-    return themed;
-  }
-
-  private named(entry: NlsEntry | undefined): string {
-    if (entry === undefined) {
-      return "";
-    }
-    if (typeof entry === "string") {
-      return entry;
-    }
-    return entry.message;
+    return parse(
+      new TextDecoder().decode(await this.fs.promises.readFile(file)),
+    );
   }
 }

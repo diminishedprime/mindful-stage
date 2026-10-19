@@ -3,18 +3,25 @@ import {
   COMMAND_REGISTRY,
   LOGGER,
   NAVIGATION,
+  NOTIFIER,
   REPO_PICKER,
   REPOS,
   STAGING,
-  TALLY,
+  STATUS_BAR,
 } from "./di-tokens";
+import { NothingToDo } from "./errors";
 import { Logger } from "./logger";
 import { Navigation } from "./navigation";
 import { RepoPicker } from "./repo-picker";
 import { Repos } from "./repos";
 import { GitStager } from "./staging";
-import { Tally } from "./tally";
-import { type CommandRegistry, Direction, GitTrackedMode } from "./types";
+import {
+  type CommandRegistry,
+  Direction,
+  GitTrackedMode,
+  type Notifier,
+  type StatusBar,
+} from "./types";
 
 @injectable()
 export class Commands {
@@ -23,9 +30,10 @@ export class Commands {
     @inject(REPO_PICKER) private readonly repoPicker: RepoPicker,
     @inject(REPOS) private readonly repos: Repos,
     @inject(STAGING) private readonly staging: GitStager,
-    @inject(TALLY) private readonly tally: Tally,
     @inject(COMMAND_REGISTRY) private readonly registry: CommandRegistry,
+    @inject(STATUS_BAR) private readonly statusBar: StatusBar,
     @inject(LOGGER) private readonly logger: Logger,
+    @inject(NOTIFIER) private readonly notifier: Notifier,
   ) {}
 
   register(): void {
@@ -43,6 +51,7 @@ export class Commands {
     this.on("pickRepo", () => this.pickRepo());
     this.on("stageHunkAtCursor", () => this.stageHunkAtCursor());
     this.on("startTracking", () => this.startTracking());
+    this.statusBar.whenClicked("pickRepo");
   }
 
   private on(name: string, run: () => Promise<void>): void {
@@ -50,83 +59,81 @@ export class Commands {
       this.logger.commandStarted(name);
       try {
         await run();
-        this.logger.commandLanded(name);
       } catch (error) {
-        this.logger.commandThrew(name, error);
-        throw error;
+        if (error instanceof NothingToDo) {
+          this.notifier.notify(error.message);
+        } else {
+          this.logger.commandThrew(name, error);
+          throw error;
+        }
       }
+      this.logger.commandLanded(name);
     });
   }
 
-  nextUnstaged(): Promise<void> {
+  private nextUnstaged(): Promise<void> {
     return this.navigation.jumpFile(Direction.Next, GitTrackedMode.Unstaged);
   }
 
-  prevUnstaged(): Promise<void> {
+  private prevUnstaged(): Promise<void> {
     return this.navigation.jumpFile(
       Direction.Previous,
       GitTrackedMode.Unstaged,
     );
   }
 
-  nextStaged(): Promise<void> {
+  private nextStaged(): Promise<void> {
     return this.navigation.jumpFile(Direction.Next, GitTrackedMode.Staged);
   }
 
-  prevStaged(): Promise<void> {
+  private prevStaged(): Promise<void> {
     return this.navigation.jumpFile(Direction.Previous, GitTrackedMode.Staged);
   }
 
-  nextUnstagedHunk(): Promise<void> {
+  private nextUnstagedHunk(): Promise<void> {
     return this.navigation.jumpHunk(Direction.Next, GitTrackedMode.Unstaged);
   }
 
-  prevUnstagedHunk(): Promise<void> {
+  private prevUnstagedHunk(): Promise<void> {
     return this.navigation.jumpHunk(
       Direction.Previous,
       GitTrackedMode.Unstaged,
     );
   }
 
-  nextStagedHunk(): Promise<void> {
+  private nextStagedHunk(): Promise<void> {
     return this.navigation.jumpHunk(Direction.Next, GitTrackedMode.Staged);
   }
 
-  prevStagedHunk(): Promise<void> {
+  private prevStagedHunk(): Promise<void> {
     return this.navigation.jumpHunk(Direction.Previous, GitTrackedMode.Staged);
   }
 
-  nextStagedRepo(): Promise<void> {
+  private nextStagedRepo(): Promise<void> {
     return this.navigation.jumpRepo(Direction.Next);
   }
 
-  prevStagedRepo(): Promise<void> {
+  private prevStagedRepo(): Promise<void> {
     return this.navigation.jumpRepo(Direction.Previous);
   }
 
-  repeatLast(): Promise<void> {
+  private repeatLast(): Promise<void> {
     return this.navigation.repeat();
   }
 
-  pickRepo(): Promise<void> {
+  private pickRepo(): Promise<void> {
     return this.repoPicker.pick();
   }
 
-  stageHunkAtCursor(): Promise<void> {
+  private stageHunkAtCursor(): Promise<void> {
     return this.staging.stageHunkAtCursor();
   }
 
-  startTracking(): Promise<void> {
+  private startTracking(): Promise<void> {
     return this.staging.startTracking();
   }
 
   ready(): Promise<void> {
     return this.repos.ready();
-  }
-
-  async dispose(): Promise<void> {
-    this.navigation.dispose();
-    await this.tally.dispose();
-    await this.repos.dispose();
   }
 }

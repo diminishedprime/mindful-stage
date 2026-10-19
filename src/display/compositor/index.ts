@@ -8,21 +8,27 @@ import {
   type Span,
   UNTRACKED,
 } from "../../types";
+import { range } from "../../util/range";
 import { MarkedLines } from "./marked-lines";
 
 @injectable()
 export class Compositor {
   compose(marks: Marks, lineCount: number): Composition[] {
+    const untracked = marks[UNTRACKED];
+    if (untracked.length > 0) {
+      return [
+        {
+          mark: `${Change.Untracked}/${Deletion.Nothing}/${Deletion.Nothing}`,
+          lines: this.changedLines(untracked, lineCount),
+        },
+      ];
+    }
     const staged = marks[GitTrackedMode.Staged];
     const unstaged = marks[GitTrackedMode.Unstaged];
     const marked = new MarkedLines();
 
     marked.changed(this.changedLines(staged, lineCount), Change.Staged);
     marked.changed(this.changedLines(unstaged, lineCount), Change.Unstaged);
-    marked.changed(
-      this.changedLines(marks[UNTRACKED], lineCount),
-      Change.Untracked,
-    );
     marked.deletedAbove(this.aboveLines(staged, lineCount), Deletion.Staged);
     marked.deletedAbove(
       this.aboveLines(unstaged, lineCount),
@@ -38,27 +44,21 @@ export class Compositor {
   }
 
   private changedLines(spans: Span[], lineCount: number): number[] {
-    const at: number[] = [];
-    for (const { start, count } of spans) {
-      for (let line = start; line < start + count; line += 1) {
-        at.push(this.clamp(line, lineCount));
-      }
-    }
-    return at;
+    return spans.flatMap(({ start, count }) =>
+      range(start, count).map((line) => this.clamp(line, lineCount)),
+    );
   }
 
   private aboveLines(spans: Span[], lineCount: number): number[] {
     return spans
       .filter(({ count, start }) => count === 0 && start > 1)
-      .map(({ start }) =>
-        this.clamp(Math.min(start, lineCount + 1) - 1, lineCount),
-      );
+      .map(({ start }) => this.clamp(start - 1, lineCount));
   }
 
   private belowLines(spans: Span[], lineCount: number): number[] {
     return spans
       .filter(({ count, start }) => count === 0 && start <= lineCount)
-      .map(({ start }) => this.clamp(start, lineCount));
+      .map(({ start }) => start - 1);
   }
 
   private clamp(line: number, lineCount: number): number {

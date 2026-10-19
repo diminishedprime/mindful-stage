@@ -1,24 +1,30 @@
-import * as vscode from "vscode";
+import { inject, injectable } from "tsyringe";
+import { VSCODE } from "../di-tokens";
 import type { Settings } from "../types";
 
+export type VscodeConfiguration = {
+  workspace: {
+    getConfiguration(section: string): {
+      get<T>(key: string): T | undefined;
+    };
+  };
+};
+
+@injectable()
 export class VscodeSettings implements Settings {
+  constructor(@inject(VSCODE) private readonly vscode: VscodeConfiguration) {}
+
   decorationsEnabled(): boolean {
     return (
-      vscode.workspace
+      this.vscode.workspace
         .getConfiguration("mindfulStage")
         .get<boolean>("decorations") ?? true
     );
   }
 
-  loggingEnabled(): boolean {
-    return !!vscode.workspace
-      .getConfiguration("mindfulStage")
-      .get<boolean>("log");
-  }
-
   colorTheme(): string {
     return (
-      vscode.workspace
+      this.vscode.workspace
         .getConfiguration("workbench")
         .get<string>("colorTheme") ?? ""
     );
@@ -26,9 +32,17 @@ export class VscodeSettings implements Settings {
 
   colorCustomizations(): Record<string, unknown> {
     return (
-      vscode.workspace
+      this.vscode.workspace
         .getConfiguration("workbench")
         .get<Record<string, unknown>>("colorCustomizations") ?? {}
     );
+  }
+
+  gitPaths(): string[] {
+    return [
+      this.vscode.workspace
+        .getConfiguration("git")
+        .get<string | string[] | null>("path") ?? [],
+    ].flat();
   }
 }

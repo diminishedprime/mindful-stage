@@ -1,3 +1,4 @@
+import * as path from "path";
 import { inject, injectable } from "tsyringe";
 import {
   COMPOSITOR,
@@ -5,6 +6,7 @@ import {
   EDITOR,
   EVENTS,
   LOGGER,
+  NOTIFIER,
   REPOS,
   SETTINGS,
 } from "../di-tokens";
@@ -19,6 +21,7 @@ import {
   type Events,
   type Marks,
   GitTrackedMode,
+  type Notifier,
   type RepoListener,
   type Settings,
   type Span,
@@ -33,8 +36,6 @@ export class Gutters implements RepoListener {
     [UNTRACKED]: [],
   };
 
-  private onScreen: string[] = [];
-
   constructor(
     @inject(DECORATIONS) private readonly decorations: Decorations,
     @inject(EDITOR) private readonly editor: Editor,
@@ -42,67 +43,69 @@ export class Gutters implements RepoListener {
     @inject(REPOS) private readonly repos: Repos,
     @inject(LOGGER) private readonly logger: Logger,
     @inject(SETTINGS) private readonly settings: Settings,
-    @inject(EVENTS) events: Events,
-  ) {
-    repos.subscribe(this);
-    events.visibleFilesChanged((files) => this.showing(files));
-    events.colorsChanged(() => this.repaint());
-    events.decorationsToggled(() => this.toggled());
-    this.repaint();
+    @inject(EVENTS) private readonly events: Events,
+    @inject(NOTIFIER) private readonly notifier: Notifier,
+  ) {}
+
+  async start(): Promise<void> {
+    this.repos.subscribe(this);
+    this.events.visibleFilesChanged((files) => this.paint(files));
+    this.events.colorsChanged(() => this.repaint());
+    this.events.decorationsToggled(() => this.toggled());
+    await this.repaint();
   }
 
-  private toggled(): void {
+  private async toggled(): Promise<void> {
     if (!this.settings.decorationsEnabled()) {
-      this.clear(this.onScreen);
+      this.clear(this.editor.visibleFiles());
       return;
     }
-    this.render(this.onScreen);
+    await this.paintVisible();
   }
 
-  private repaint(): void {
-    this.decorations
-      .recolor()
-      .then(() => this.showing(this.editor.visibleFiles()))
-      .catch((error: unknown) => this.logger.failed("recolor", error));
+  private async repaint(): Promise<void> {
+    try {
+      await this.decorations.recolor();
+    } catch (error) {
+      this.logger.failed("recolor", error);
+      this.notifier.error((error as Error).message);
+      return;
+    }
+    await this.paintVisible();
   }
 
-  showing(files: string[]): void {
-    this.onScreen = files;
-    this.render(files);
+  refreshed(): Promise<void> {
+    return this.paintVisible();
   }
 
-  refreshed(repo: string): void {
-    this.render(
-      this.onScreen.filter(
-        (file) => this.repos.findRepoContaining(file)?.path === repo,
-      ),
-    );
+  removed(): Promise<void> {
+    return this.paintVisible();
   }
 
-  removed(): void {
-    this.render(this.onScreen);
-  }
-
-  private render(files: string[]): void {
-    this.paint(files).catch((error: unknown) =>
-      this.logger.failed("gutter render", error),
-    );
+  private paintVisible(): Promise<void> {
+    return this.paint(this.editor.visibleFiles());
   }
 
   private async paint(files: string[]): Promise<void> {
     if (!this.settings.decorationsEnabled()) {
       return;
     }
-    await this.repos.discovered();
     for (const file of files) {
-      const lineCount = this.editor.numberOfLines(file);
-      if (lineCount === 0) {
-        continue;
+      try {
+        const lineCount = this.editor.numberOfLines(file);
+        this.decorations.render(
+          file,
+          this.compositor.compose(
+            await this.marksFor(file, lineCount),
+            lineCount,
+          ),
+        );
+      } catch (error) {
+        this.logger.failed(`gutter paint for ${file}`, error);
+        this.notifier.error(
+          `couldn't draw the gutter for ${path.basename(file)}`,
+        );
       }
-      this.decorations.render(
-        file,
-        this.compositor.compose(await this.marksFor(file), lineCount),
-      );
     }
   }
 
@@ -112,14 +115,17 @@ export class Gutters implements RepoListener {
     }
   }
 
-  private async marksFor(file: string): Promise<Marks> {
+  private async marksFor(file: string, lineCount: number): Promise<Marks> {
     const repo = this.repos.findRepoContaining(file);
     if (repo === undefined) {
       return Gutters.NOTHING;
     }
     const changes = await repo.status.value();
     if (changes.untracked.has(file)) {
-      return { ...Gutters.NOTHING, [UNTRACKED]: this.wholeFile(file) };
+      return {
+        ...Gutters.NOTHING,
+        [UNTRACKED]: [{ start: 1, count: lineCount }],
+      };
     }
     return {
       [GitTrackedMode.Unstaged]: Gutters.spans(
@@ -132,19 +138,10 @@ export class Gutters implements RepoListener {
     };
   }
 
-  private wholeFile(file: string): Span[] {
-    const lines = this.editor.numberOfLines(file);
-    if (lines === 0) {
-      return [];
-    }
-    return [{ start: 1, count: lines }];
-  }
-
   private static spans(hunks: Diff): Span[] {
-    const spans: Span[] = [];
-    for (const hunk of hunks.all(Direction.Next)) {
-      spans.push({ start: hunk.start, count: hunk.count });
-    }
-    return spans;
+    return Array.from(hunks.all(Direction.Next), ({ start, count }) => ({
+      start,
+      count,
+    }));
   }
 }

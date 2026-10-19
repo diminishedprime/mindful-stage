@@ -34,7 +34,8 @@ export class Summary {
 
   private static readonly PLAIN: Style = {
     counted: {
-      [Counted.UnpushedCommits]: (count) => `${count} unpushed commits`,
+      [Counted.UnpushedCommits]: (count) =>
+        `${count} unpushed ${count === 1 ? "commit" : "commits"}`,
       [Counted.MissingUpstream]: () => "no upstream",
     },
     labelled: {
@@ -57,22 +58,10 @@ export class Summary {
   static of(changes: Changes): Summary {
     return new Summary(
       new Map(Object.entries(changes.remaining) as [StatusCode, number][]),
-      changes[GitTrackedMode.Staged].isEmpty ? 0 : 1,
+      changes[GitTrackedMode.Staged].length === 0 ? 0 : 1,
       changes.ahead,
       changes.upstream ? 0 : 1,
     );
-  }
-
-  static sum(summaries: Iterable<Summary>): Summary {
-    let total = Summary.none();
-    for (const summary of summaries) {
-      total = total.plus(summary);
-    }
-    return total;
-  }
-
-  get anyStaged(): boolean {
-    return this.staged > 0;
   }
 
   plus(other: Summary): Summary {
@@ -95,15 +84,6 @@ export class Summary {
 
   minus(other: Summary): Summary {
     return this.plus(other.negated());
-  }
-
-  asOneRepo(): Summary {
-    return new Summary(
-      this.countsByCode,
-      this.staged,
-      Math.min(this.unpushed, 1),
-      this.missingUpstream,
-    );
   }
 
   terse(): string {

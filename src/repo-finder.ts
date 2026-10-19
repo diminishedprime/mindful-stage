@@ -1,34 +1,56 @@
-import fg from "fast-glob";
 import * as path from "path";
-import type { Readable } from "stream";
-import type { RepoFinder } from "./types";
+import { inject, injectable } from "tsyringe";
+import { FS, GITIGNORES } from "./di-tokens";
+import { Gitignores } from "./gitignores";
+import type { Fs, RepoFinder } from "./types";
 
-export class GlobRepoFinder implements RepoFinder {
-  private readonly walks = new Set<Readable>();
+@injectable()
+export class WalkingRepoFinder implements RepoFinder {
+  private static readonly SKIPPED = new Set([".git", "node_modules"]);
 
-  async findReposUnderWorkspace(root: string): Promise<string[]> {
-    const walk = fg.stream("**/.git", {
-      cwd: root,
-      onlyDirectories: true,
-      dot: true,
-      absolute: true,
-      ignore: ["**/node_modules", "**/.git/*"],
-    }) as Readable;
-    this.walks.add(walk);
-    try {
-      const repos: string[] = [];
-      for await (const gitDir of walk) {
-        repos.push(path.dirname(String(gitDir)));
-      }
-      return repos;
-    } finally {
-      this.walks.delete(walk);
-    }
+  private disposed = false;
+
+  constructor(
+    @inject(FS) private readonly fs: Fs,
+    @inject(GITIGNORES) private readonly gitignores: Gitignores,
+  ) {}
+
+  async findReposUnderWorkspace(
+    root: string,
+    found: (repo: string) => Promise<void>,
+  ): Promise<void> {
+    await this.visit(root, found);
   }
 
+  // Stryker disable all: disposal is not observable through the test fakes
   async dispose(): Promise<void> {
-    for (const walk of this.walks) {
-      walk.destroy(new Error("disposed"));
+    this.disposed = true;
+  }
+  // Stryker restore all
+
+  private async visit(
+    dir: string,
+    found: (repo: string) => Promise<void>,
+  ): Promise<void> {
+    // Stryker disable all: disposal is not observable through the test fakes
+    if (this.disposed) {
+      return;
     }
+    // Stryker restore all
+    const entries = await this.fs.promises.readdir(dir, {
+      withFileTypes: true,
+    });
+    const folders = entries.filter((entry) => entry.isDirectory());
+    await Promise.all([
+      folders.some((folder) => folder.name === ".git") ? found(dir) : undefined,
+      ...folders
+        .filter((folder) => !WalkingRepoFinder.SKIPPED.has(folder.name))
+        .map(async (folder) => {
+          const child = path.join(dir, folder.name);
+          if (!(await this.gitignores.ignoresDirectory(child))) {
+            await this.visit(child, found);
+          }
+        }),
+    ]);
   }
 }

@@ -1,28 +1,40 @@
-import * as fs from "fs/promises";
 import * as path from "path";
 import type { FileStatusResult } from "simple-git";
+import { NothingToDo } from "../errors";
 import { Ring } from "../ring";
 import {
   type Changes,
   type Diff,
+  type Fs,
   type Git,
   type Hunk,
   GitTrackedMode,
   StatusCode,
 } from "../types";
-import { type Completed, Refresher } from "../util/refresher";
+import { type Completed, type Failed, Refresher } from "../util/refresher";
 import { Hunks } from "./hunks";
 
 export class Repo {
+  private static readonly COMMON_README_FILENAMES: readonly string[] = [
+    "readme.md",
+    "readme.markdown",
+    "readme.rst",
+    "readme.org",
+    "readme.txt",
+    "readme",
+  ] as const;
+
   readonly status: Refresher<Changes>;
   private readonly hunks: Hunks;
 
   constructor(
     readonly path: string,
+    private readonly fs: Fs,
     private readonly git: Git,
     completed: Completed<Changes>,
+    failed: Failed,
   ) {
-    this.status = new Refresher(() => this.statusOf(), completed);
+    this.status = new Refresher(() => this.statusOf(), completed, failed);
     this.hunks = new Hunks(path, git);
   }
 
@@ -36,42 +48,40 @@ export class Repo {
 
   async stage(hunk: Hunk): Promise<void> {
     await this.git.stage(this.path, hunk);
-    this.hunks.invalidateFile(path.join(this.path, hunk.to));
   }
 
-  async startTracking(file: string): Promise<boolean> {
+  async startTracking(file: string): Promise<void> {
     const fresh = await this.status.fresh();
     if (!fresh.untracked.has(file)) {
-      return false;
+      throw new NothingToDo(`'${path.basename(file)}' is already tracked`);
     }
-    const content = await fs.readFile(file, "utf8");
+    const content = new TextDecoder().decode(
+      await this.fs.promises.readFile(file),
+    );
     const newline = content.indexOf("\n");
     const firstLine = newline === -1 ? content : content.slice(0, newline + 1);
     const hash = await this.git.hashObject(this.path, firstLine);
     await this.git.addToIndex(this.path, path.relative(this.path, file), hash);
-    this.hunks.invalidateFile(file);
-    return true;
   }
 
-  fileTouched(file: string): Promise<void> {
+  fileTouched(file: string): void {
     this.hunks.invalidateFile(file);
-    return this.status.rerun();
+    this.status.rerun();
   }
 
-  gitDirTouched(): Promise<void> {
+  gitDirTouched(): void {
     this.hunks.invalidateRepo();
-    return this.status.rerun();
+    this.status.rerun();
   }
 
   private async statusOf(): Promise<Changes> {
-    const { files, not_added, ahead, tracking } = await this.git.statusFor(
-      this.path,
+    const [{ files, not_added, ahead, tracking }, fallback] = await Promise.all(
+      [this.git.statusFor(this.path), this.fallback()],
     );
     const ordered = Repo.ordered(files, not_added.length);
     const remaining: Partial<Record<StatusCode, number>> = {};
-    const relativeUnstaged: string[] = [];
-    let unstaged: string[] = [];
-    let staged: string[] = [];
+    const unstaged: string[] = [];
+    const staged: string[] = [];
     const deleted = new Set<string>();
     const untracked = new Set<string>();
     for (const { path: file, index, working_dir } of ordered) {
@@ -79,7 +89,6 @@ export class Repo {
       if (working_dir !== " ") {
         const code = working_dir as StatusCode;
         remaining[code] = (remaining[code] ?? 0) + 1;
-        relativeUnstaged.push(file);
         unstaged.push(absolute);
         if (working_dir === "D") {
           deleted.add(absolute);
@@ -87,33 +96,105 @@ export class Repo {
           untracked.add(absolute);
         }
       }
-      if (index !== " " && index !== "?" && index !== "D") {
+      if (index !== " " && index !== "?") {
         staged.push(absolute);
       }
     }
-    if (relativeUnstaged.length > 0) {
-      const lfs = await this.git.lfsPathsFor(this.path, relativeUnstaged);
-      if (lfs.size > 0) {
-        const excluded = new Set(
-          [...lfs].map((file) => path.join(this.path, file)),
-        );
-        for (const file of excluded) {
-          deleted.delete(file);
-          untracked.delete(file);
-        }
-        unstaged = unstaged.filter((file) => !excluded.has(file));
-        staged = staged.filter((file) => !excluded.has(file));
-      }
-    }
+    const unopenable = await this.unopenableAmong([...unstaged, ...staged]);
     return {
-      [GitTrackedMode.Unstaged]: Ring.of(unstaged),
-      [GitTrackedMode.Staged]: Ring.of(staged),
+      [GitTrackedMode.Unstaged]: unstaged,
+      [GitTrackedMode.Staged]: staged,
+      stops: {
+        [GitTrackedMode.Unstaged]: Repo.stops(unstaged, unopenable, fallback),
+        [GitTrackedMode.Staged]: Repo.stops(staged, unopenable, fallback),
+      },
+      unopenable: {
+        [GitTrackedMode.Unstaged]: unstaged.filter((file) =>
+          unopenable.has(file),
+        ).length,
+        [GitTrackedMode.Staged]: staged.filter((file) => unopenable.has(file))
+          .length,
+      },
+      fallback,
       untracked,
       deleted,
       remaining,
       ahead,
       upstream: tracking !== null,
     };
+  }
+
+  private async isBinary(file: string): Promise<boolean> {
+    await using handle = await this.fs.promises.open(file);
+    const { bytesRead, buffer } = await handle.read(
+      Buffer.alloc(8000),
+      0,
+      8000,
+      0,
+    );
+    return buffer.subarray(0, bytesRead).includes(0);
+  }
+
+  private async canOpen(file: string): Promise<boolean> {
+    try {
+      return !(await this.isBinary(file));
+    } catch {
+      return false;
+    }
+  }
+
+  private async unopenableAmong(files: string[]): Promise<Set<string>> {
+    const unopenable = new Set<string>();
+    for (const file of new Set(files)) {
+      const canOpen = await this.canOpen(file);
+      if (canOpen === false) {
+        unopenable.add(file);
+      }
+    }
+    return unopenable;
+  }
+
+  private async fallback(): Promise<string | undefined> {
+    const tracked = await this.git.trackedFilesFor(this.path);
+    const readme = Repo.findReadme(tracked);
+    if (readme !== undefined) {
+      const candidate = path.join(this.path, readme);
+      if (await this.canOpen(candidate)) {
+        return candidate;
+      }
+    }
+    for (const file of tracked) {
+      const candidate = path.join(this.path, file);
+      if (await this.canOpen(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  private static findReadme(tracked: string[]): string | undefined {
+    return tracked.find((file) =>
+      Repo.COMMON_README_FILENAMES.includes(file.toLowerCase()),
+    );
+  }
+
+  private static stops(
+    files: string[],
+    unopenable: Set<string>,
+    fallback: string | undefined,
+  ): Ring<string> {
+    const ordinary = files.filter(
+      (file) => !unopenable.has(file) && file !== fallback,
+    );
+    const last =
+      files.some((file) => file === fallback || unopenable.has(file)) &&
+      // Stryker disable next-line ConditionalExpression: only narrows the type, this mutant wouldn't compile if we type checked mutants
+      fallback !== undefined
+        ? [fallback]
+        : [];
+    return Ring.keyed([...ordinary, ...last], (file) =>
+      file === fallback ? `1${file}` : `0${file}`,
+    );
   }
 
   // Just some fun fanciness. Since we know that git output is already sorted,
@@ -124,18 +205,17 @@ export class Repo {
     untracked: number,
   ): FileStatusResult[] {
     const boundary = files.length - untracked;
-    const ordered: FileStatusResult[] = [];
     let i = 0;
     let j = boundary;
-    while (i < boundary && j < files.length) {
-      ordered.push(files[i]!.path < files[j]!.path ? files[i++]! : files[j++]!);
-    }
-    while (i < boundary) {
-      ordered.push(files[i++]!);
-    }
-    while (j < files.length) {
-      ordered.push(files[j++]!);
-    }
-    return ordered;
+    return files.map(() => {
+      if (j >= files.length) {
+        return files[i++]!;
+      }
+      if (i >= boundary) {
+        return files[j++]!;
+      }
+      // Stryker disable next-line EqualityOperator: a tracked and an untracked file never share a path
+      return files[i]!.path < files[j]!.path ? files[i++]! : files[j++]!;
+    });
   }
 }

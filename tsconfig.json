@@ -1,9 +1,14 @@
 {
   "compilerOptions": {
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
     "skipLibCheck": true,
     "experimentalDecorators": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "target": "es2025",
     "module": "esnext",
     "moduleResolution": "bundler",
