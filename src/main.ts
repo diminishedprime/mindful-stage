@@ -1,4 +1,4 @@
-import "reflect-metadata";
+import "@abraham/reflection";
 import type { ExtensionContext } from "vscode";
 import { start } from "./graph";
 

@@ -1,6 +1,6 @@
 import * as nodeFs from "fs";
 import * as path from "path";
-import "reflect-metadata";
+import "@abraham/reflection";
 import { container } from "tsyringe";
 import { App } from "../../src/app";
 import { Commands } from "../../src/commands";

@@ -195,12 +195,12 @@
     "vitest": "^5.0.0"
   },
   "dependencies": {
+    "@abraham/reflection": "^0.13.0",
     "@rushstack/lookup-by-path": "^0.10.15",
     "gitignore-fs": "^2.2.3",
     "jsonc-parser": "^3.3.1",
     "p-limit": "^7.3.3",
     "parse-diff": "^0.12.0",
-    "reflect-metadata": "^0.2.2",
     "simple-git": "^3.36.0",
     "sorted-btree": "^2.1.0",
     "tsyringe": "^4.10.0",

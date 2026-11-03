@@ -9,6 +9,10 @@ await build({
   format: "cjs",
   mainFields: ["module", "main"],
   external: ["vscode"],
+  define: { Reflect: "mindfulStageReflect" },
+  banner: {
+    js: '"use strict";const mindfulStageReflect = Object.create(Reflect);',
+  },
   outfile: "dist/main.js",
   plugins: [Macros({ runner: unrunRunner() })],
 });
